@@ -5,6 +5,8 @@ import logging
 
 from flask import Flask, request, jsonify
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore import Transaction
 
 from common import firestore_schema
 
@@ -37,11 +39,51 @@ except Exception as e:
     db = None  # Ensure db is None if initialization fails
 
 
+# --- Transactional User Creation Function ---
+@firestore.transactional
+def create_user_in_transaction(
+    transaction: Transaction, user_id, user_data_to_create, email_to_check
+):
+    """
+    Creates a user document within a transaction, ensuring email uniqueness.
+    """
+    logger.info(
+        f"Transaction {transaction.id}: Checking for existing email: {email_to_check}"
+    )
+
+    # 1. Check if email already exists
+    users_ref = db.collection(firestore_schema.USERS_COLLECTION)
+    # Note: Queries inside transactions must read documents before writing them.
+    # We are querying for existence.
+    query = users_ref.where(
+        filter=FieldFilter(firestore_schema.USER_EMAIL_FIELD, "==", email_to_check)
+    ).limit(1)
+    docs = list(
+        query.stream(transaction=transaction)
+    )  # Execute query within transaction
+
+    if docs:
+        logger.warning(
+            f"Transaction {transaction.id}: Email '{email_to_check}' already exists. User ID: {docs[0].id}"
+        )
+        # By raising an exception, the transaction will automatically roll back.
+        # However, we want to return a specific error message, so we'll return a status.
+        return False, "Email already registered."
+
+    # 2. If email does not exist, create the new user document
+    user_doc_ref = users_ref.document(user_id)
+    transaction.set(user_doc_ref, user_data_to_create)
+    logger.info(
+        f"Transaction {transaction.id}: User document {user_id} set for creation."
+    )
+    return True, user_id
+
+
 # --- API Endpoint ---
 @app.route("/users/register", methods=["POST"])
 def register_user():
     """
-    Registers a new user.
+    Registers a new user if the email is not already in use.
     Expects JSON payload with 'name' and 'email'. 'phone_number' is optional.
     """
     if not db:
@@ -54,13 +96,16 @@ def register_user():
         )
 
     try:
-        logger.info(
-            f"Received request to /users/register. Request ID: {request.headers.get('Function-Execution-Id')}"
-        )
+        request_id = request.headers.get(
+            "Function-Execution-Id", str(uuid.uuid4())
+        )  # Get execution ID or generate one
+        logger.info(f"Request ID {request_id}: Received request to /users/register.")
         data = request.get_json()
 
         if not data:
-            logger.warning("Request body is empty or not JSON.")
+            logger.warning(
+                f"Request ID {request_id}: Request body is empty or not JSON."
+            )
             return (
                 jsonify({"error": "Invalid request: No data provided or not JSON"}),
                 400,
@@ -68,10 +113,12 @@ def register_user():
 
         name = data.get(firestore_schema.USER_NAME_FIELD)
         email = data.get(firestore_schema.USER_EMAIL_FIELD)
-        phone_number = data.get(firestore_schema.USER_PHONE_NUMBER_FIELD)  # Optional
+        phone_number = data.get(firestore_schema.USER_PHONE_NUMBER_FIELD)
 
         if not name or not email:
-            logger.warning(f"Missing required fields. Name: {name}, Email: {email}")
+            logger.warning(
+                f"Request ID {request_id}: Missing required fields. Name: {name}, Email: {email}"
+            )
             return (
                 jsonify(
                     {
@@ -81,53 +128,74 @@ def register_user():
                 400,
             )
 
-        # Validate email format (basic validation)
+        # Basic email format validation
         if "@" not in email or "." not in email.split("@")[-1]:
-            logger.warning(f"Invalid email format: {email}")
+            logger.warning(f"Request ID {request_id}: Invalid email format: {email}")
             return jsonify({"error": "Invalid email format"}), 400
 
-        user_id = str(uuid.uuid4())
-        logger.info(f"Generated new user ID: {user_id} for email: {email}")
+        email = (
+            email.lower().strip()
+        )  # Normalize email: convert to lowercase and strip whitespace
 
-        user_doc_ref = db.collection(firestore_schema.USERS_COLLECTION).document(
-            user_id
+        user_id = str(uuid.uuid4())
+        logger.info(
+            f"Request ID {request_id}: Attempting registration for email: {email} with potential user ID: {user_id}"
         )
 
-        # Prepare user data, using Firestore server timestamp for creation/update times
-        current_time = firestore.SERVER_TIMESTAMP  # Use server timestamp
-
-        user_data = {
+        current_time = firestore.SERVER_TIMESTAMP
+        user_data_to_create = {
             firestore_schema.USER_NAME_FIELD: name,
-            firestore_schema.USER_EMAIL_FIELD: email,
-            firestore_schema.USER_PREFERENCES_RAW_FIELD: {  # Initialize with empty preferences
+            firestore_schema.USER_EMAIL_FIELD: email,  # Store normalized email
+            firestore_schema.USER_PREFERENCES_RAW_FIELD: {
                 firestore_schema.USER_PREF_FAV_TEAMS: [],
                 firestore_schema.USER_PREF_OTHER_TEAMS: [],
                 firestore_schema.USER_PREF_LIKED_EXAMPLES: [],
                 firestore_schema.USER_PREF_CUSTOM_SNIPPET: "",
             },
-            firestore_schema.USER_ACTIVE_GEMINI_PROMPT_FIELD: "",  # Initialize empty
-            firestore_schema.USER_FCM_TOKENS_FIELD: [],  # Initialize empty
+            firestore_schema.USER_ACTIVE_GEMINI_PROMPT_FIELD: "",
+            firestore_schema.USER_FCM_TOKENS_FIELD: [],
             firestore_schema.USER_CREATED_AT_FIELD: current_time,
             firestore_schema.USER_UPDATED_AT_FIELD: current_time,
         }
-        if phone_number:  # Add phone number only if provided
-            user_data[firestore_schema.USER_PHONE_NUMBER_FIELD] = phone_number
+        if phone_number:
+            user_data_to_create[firestore_schema.USER_PHONE_NUMBER_FIELD] = (
+                phone_number.strip()
+            )
 
-        user_doc_ref.set(user_data)
-        logger.info(f"User document created successfully for user ID: {user_id}")
-
-        return (
-            jsonify(
-                {
-                    "message": "User registered successfully",
-                    "id": user_id,
-                }
-            ),
-            201,
+        # Run the user creation logic within a transaction
+        transaction = db.transaction()
+        success, result_message = create_user_in_transaction(
+            transaction, user_id, user_data_to_create, email
         )
 
+        if success:
+            logger.info(
+                f"Request ID {request_id}: User document created successfully for user ID: {result_message} (email: {email})"
+            )
+            return (
+                jsonify(
+                    {
+                        "message": "User registered successfully",
+                        "id": result_message,
+                    }
+                ),
+                201,
+            )
+        else:
+            logger.warning(
+                f"Request ID {request_id}: Failed to register user (email: {email}). Reason: {result_message}"
+            )
+            return (
+                jsonify({"error": result_message}),
+                409,
+            )  # 409 Conflict for existing resource
+
     except Exception as e:
-        logger.error(f"An error occurred during user registration: {e}", exc_info=True)
+        request_id = request.headers.get("Function-Execution-Id", "N/A")
+        logger.error(
+            f"Request ID {request_id}: An error occurred during user registration: {e}",
+            exc_info=True,
+        )
         return jsonify({"error": "An internal server error occurred"}), 500
 
 
