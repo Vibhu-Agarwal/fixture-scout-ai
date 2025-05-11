@@ -8,6 +8,7 @@ logger.setLevel(logging.INFO)
 
 # --- Project Name (can be used in logging, etc.) ---
 PROJECT_NAME = "FixtureScoutAI"
+DATABASE_ID = "fixture-scout-ai-db"  # Firestore database ID
 
 # --- Collection Names ---
 USERS_COLLECTION = "users"

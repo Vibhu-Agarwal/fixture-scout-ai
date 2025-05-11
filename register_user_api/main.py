@@ -30,7 +30,7 @@ app = Flask(__name__)
 # --- Firestore Client Initialization ---
 # Initialize outside of request handling for better performance (reuses client across invocations)
 try:
-    db = firestore.Client()
+    db = firestore.Client(database=firestore_schema.DATABASE_ID)
     logger.info("Firestore client initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}", exc_info=True)
@@ -120,7 +120,7 @@ def register_user():
             jsonify(
                 {
                     "message": "User registered successfully",
-                    firestore_schema.USER_ID_FIELD: user_id,  # Using the actual field name from schema for userId key
+                    "id": user_id,
                 }
             ),
             201,
