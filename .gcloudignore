@@ -1,0 +1,79 @@
+# fixture-scout-ai/.gcloudignore
+
+# Default gcloudignore configuration. This file is used to ignore files
+# when deploying to Google Cloud.
+#
+# For more information, run:
+#   $ gcloud topic gcloudignore
+#
+# Version control system files
+.git
+.gitignore
+
+# Node.js dependencies (if you were using Node.js for something else)
+node_modules/
+
+# Python build artifacts and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environment directories
+venv/
+.venv/
+.env
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+celerybeat-schedule
+# If you use other venv names, add them
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local instance / data / secrets (if any, ensure sensitive ones are also in .gitignore)
+local_settings.py
+instance/
+local_test_data/
+*.sqlite3
+*.db
+service-account-key.json # IMPORTANT: Ensure your actual key is NOT in the repo
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Test files & reports (adjust if you want to deploy tests for some reason)
+*.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+test-reports/
