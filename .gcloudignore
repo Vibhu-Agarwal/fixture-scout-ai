@@ -79,3 +79,4 @@ coverage.xml
 test-reports/
 
 localdev/
+deploy.sh

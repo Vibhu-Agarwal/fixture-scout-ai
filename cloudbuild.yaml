@@ -1,0 +1,51 @@
+# fixture-scout-ai/cloudbuild.yaml
+
+steps:
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: Deploy Function
+  entrypoint: 'bash'
+  args:
+   - -c
+   - |
+      echo "--- Preparing to deploy function from directory: ${_FUNC_DIR} ---"
+      
+      # 1. Copy shared common code into the target function's directory
+      #    This ensures 'common' is inside the directory that will be used as --source
+      echo "Copying common/* to ${_FUNC_DIR}/common/"
+      cp -R common ${_FUNC_DIR}/
+      
+      # 2. Navigate into the function's directory
+      cd ${_FUNC_DIR}
+      
+      # 3. Deploy, using the current directory (.) as the source
+      echo "Deploying function ${_FUNC_NAME} from $(pwd) using runtime ${_RUNTIME}..."
+      
+      gcloud functions deploy ${_FUNC_NAME} \
+        --gen2 \
+        --runtime=${_RUNTIME} \
+        --region=${_REGION} \
+        --source=. \
+        --entry-point=main_app \
+        --trigger-http \
+        --allow-unauthenticated
+        --service-account=${_SERVICE_ACCOUNT}
+
+      echo "--- Cloud Build Step Completed ---"
+
+
+#-------------------------------------------------------------------------------
+# Configuration
+#-------------------------------------------------------------------------------
+
+# Default values for variables.
+# These can be overridden when submitting the build using --substitutions
+substitutions:
+  _RUNTIME: 'python312'                     # Specify Python runtime
+  _REGION: 'asia-south1'                    # Default Region (Bangalore, India)
+
+# Set a timeout for the build
+timeout: '1200s' 
+
+# Use Cloud Logging for build logs
+options:
+ logging: CLOUD_LOGGING_ONLY
