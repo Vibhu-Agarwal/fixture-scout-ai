@@ -9,45 +9,56 @@ import json
 import os
 
 from google.cloud import firestore
-import google.generativeai as genai  # Using the new standalone Gemini SDK
+
+# Use Vertex AI SDK for Gemini
+from google.cloud import aiplatform  # General SDK
+import vertexai  # Specific Vertex AI functionalities
+from vertexai.generative_models import (
+    GenerativeModel,
+    GenerationConfig,
+    HarmCategory,
+    HarmBlockThreshold,
+)
+
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
+
 
 # --- Configuration ---
 # Firestore Client
 DATABASE_NAME = os.getenv("FIRESTORE_DATABASE_NAME")
-try:
-    if DATABASE_NAME:
-        db = firestore.Client(database=DATABASE_NAME)
-    else:
-        db = firestore.Client()
-except Exception as e:
-    print(f"Could not initialize Firestore client. Error: {e}")
-    db = None
+if DATABASE_NAME:
+    db = firestore.Client(database=DATABASE_NAME)
+else:
+    db = firestore.Client()
 
-# Gemini API Configuration
-# Make sure to set your GOOGLE_API_KEY environment variable
-# You can get an API key from Google AI Studio: https://aistudio.google.com/app/apikey
-# For production on GCP, consider using Vertex AI SDK with service accounts for better security and integration.
-# For this phase, we'll use the standalone Gemini SDK for simplicity.
+# Vertex AI Configuration
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+GCP_REGION = os.getenv("GCP_REGION")
+
 try:
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-    if not GOOGLE_API_KEY:
-        raise ValueError("GOOGLE_API_KEY environment variable not set.")
-    genai.configure(api_key=GOOGLE_API_KEY)
-    # For `gemini-pro` (text-only), but you might use `gemini-1.5-pro-latest` or `gemini-1.0-pro`
-    # Ensure the model name is one available through the API key.
-    # Common models: "gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest"
-    # For this example, let's use a widely available one:
-    GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-1.0-pro")
-    gemini_model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    print(f"Gemini model '{GEMINI_MODEL_NAME}' initialized.")
+    if not GCP_PROJECT_ID:
+        raise ValueError("GCP_PROJECT_ID environment variable not set.")
+
+    vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+
+    # Common models on Vertex AI: "gemini-1.0-pro", "gemini-1.5-flash-001", "gemini-1.5-pro-001"
+    # The model name might need versioning like "gemini-1.0-pro-001" or "gemini-1.0-pro-vision-001" for multimodal
+    # For text-only, "gemini-1.0-pro" or "gemini-1.5-flash-001" are good starting points.
+    GEMINI_MODEL_NAME_VERTEX = os.getenv("GEMINI_MODEL_NAME_VERTEX", "gemini-1.0-pro")
+    gemini_vertex_model = GenerativeModel(GEMINI_MODEL_NAME_VERTEX)
+    print(
+        f"Vertex AI Gemini model '{GEMINI_MODEL_NAME_VERTEX}' initialized in project '{GCP_PROJECT_ID}' region '{GCP_REGION}'."
+    )
 except Exception as e:
-    print(f"Could not initialize Gemini client. Error: {e}")
-    gemini_model = None
+    print(f"Could not initialize Vertex AI Gemini client. Error: {e}")
+    gemini_vertex_model = None
 
 
 app = FastAPI(
     title="Scout Service",
-    description="Processes fixtures using an LLM (Gemini) to create personalized reminders.",
+    description="Processes fixtures using an LLM (Gemini via Vertex AI) to create personalized reminders.",
     version="0.1.0",
 )
 
@@ -64,14 +75,14 @@ class FixtureForLLM(BaseModel):
 
 
 class LLMReminderTrigger(BaseModel):
-    reminder_offset_minutes_before_kickoff: int = Field(..., example=60)
-    reminder_mode: str = Field(..., example="email")  # "email", "phone_call_mock"
-    custom_message: str = Field(..., example="Big match coming up!")
+    reminder_offset_minutes_before_kickoff: int = Field(..., examples=[60])
+    reminder_mode: str = Field(..., examples=["email"])
+    custom_message: str = Field(..., examples=["Big match coming up!"])
 
 
 class LLMSelectedFixtureResponse(BaseModel):
     fixture_id: str
-    importance_score: int = Field(..., ge=1, le=5, example=4)  # Score 1-5
+    importance_score: int = Field(..., ge=1, le=5, examples=[4])
     reminder_triggers: List[LLMReminderTrigger]
 
 
@@ -89,12 +100,10 @@ REMINDERS_COLLECTION = "reminders"
 
 
 # --- Helper Functions ---
-def _construct_gemini_prompt(
+def _construct_gemini_prompt_vertex(
     user_optimized_prompt: str, fixtures: List[FixtureForLLM]
 ) -> str:
-    fixtures_json_str = json.dumps(
-        [f.model_dump() for f in fixtures], indent=2
-    )  # Pydantic v2
+    fixtures_json_str = json.dumps([f.model_dump() for f in fixtures], indent=2)
 
     prompt = f"""
 You are Fixture Scout AI. Your task is to select relevant football matches for a user based on their preferences and a list of upcoming fixtures.
@@ -120,7 +129,7 @@ Instructions for your response:
            - For importance 3, maybe one reminder 2-4h before.
            - For importance 1-2, maybe one reminder 24h before or a few hours before.
         ii. "reminder_mode": String, either "email" or "phone_call_mock".
-            - Use "phone_call_mock" ONLY for 매우 important matches (e.g., importance 5, like a Real Madrid vs Barcelona match, and for the reminder closest to kickoff, like 1 hour before).
+            - Use "phone_call_mock" ONLY for very important matches (e.g., importance 5, like a Real Madrid vs Barcelona match, and for the reminder closest to kickoff, like 1 hour before).
             - Otherwise, use "email".
         iii. "custom_message": A short, engaging, personalized message for the reminder (max 150 characters). Example: "Heads up! El Clasico (Real Madrid vs Barcelona) is tomorrow!" or "CRITICAL: Real Madrid vs Barca in 1 hour!".
 
@@ -144,13 +153,18 @@ DO NOT include any explanations or text outside of the JSON array.
     return prompt
 
 
+LOOKOUT_WINDOW = 14  # Days to look ahead for fixtures
+
+
 # --- API Endpoint ---
 @app.post("/scout/process-user-fixtures", status_code=200)
 async def process_user_fixtures(request: ScoutRequest = Body(...)):
     if not db:
         raise HTTPException(status_code=500, detail="Firestore client not initialized.")
-    if not gemini_model:
-        raise HTTPException(status_code=500, detail="Gemini client not initialized.")
+    if not gemini_vertex_model:  # Check the Vertex AI model
+        raise HTTPException(
+            status_code=500, detail="Vertex AI Gemini client not initialized."
+        )
 
     user_id = request.user_id
 
@@ -170,9 +184,7 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
 
     # 2. Fetch upcoming fixtures (e.g., next 7-14 days)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
-    future_cutoff_utc = now_utc + datetime.timedelta(
-        days=14
-    )  # Consider fixtures in the next 14 days
+    future_cutoff_utc = now_utc + datetime.timedelta(days=LOOKOUT_WINDOW)
 
     fixtures_query = (
         db.collection(FIXTURES_COLLECTION)
@@ -192,20 +204,16 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
 
         # Convert datetime to string for LLM, ensure it's UTC and clearly formatted
         match_dt_utc = fixture_data.get("match_datetime_utc")
-        if isinstance(match_dt_utc, datetime.datetime):
-            match_datetime_utc_str = match_dt_utc.isoformat()
-        else:  # Fallback if it's already a string or other type (less ideal)
-            match_datetime_utc_str = str(match_dt_utc)
-
+        match_datetime_utc_str = (
+            match_dt_utc.isoformat()
+            if isinstance(match_dt_utc, datetime.datetime)
+            else str(match_dt_utc)
+        )
         upcoming_fixtures_for_llm.append(
             FixtureForLLM(
                 fixture_id=fixture_data["fixture_id"],
-                home_team_name=fixture_data["home_team"][
-                    "name"
-                ],  # Assuming nested structure
-                away_team_name=fixture_data["away_team"][
-                    "name"
-                ],  # Assuming nested structure
+                home_team_name=fixture_data["home_team"]["name"],
+                away_team_name=fixture_data["away_team"]["name"],
                 league_name=fixture_data["league_name"],
                 match_datetime_utc_str=match_datetime_utc_str,
                 stage=fixture_data.get("stage"),
@@ -219,90 +227,73 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
         }
 
     # 3. Construct the prompt for Gemini
-    full_llm_prompt = _construct_gemini_prompt(
+    full_llm_prompt = _construct_gemini_prompt_vertex(
         optimized_llm_prompt, upcoming_fixtures_for_llm
     )
 
-    # 4. Call Gemini API
+    # 4. Call Gemini API via Vertex AI
     llm_response_raw = ""
     selected_matches_from_llm: List[LLMSelectedFixtureResponse] = []
     try:
         print(
-            f"Sending prompt to Gemini for user {user_id}:\n{full_llm_prompt[:1000]}..."
-        )  # Log beginning of prompt
-
-        # Configuration for safer generation (optional, but good practice)
-        generation_config = genai.types.GenerationConfig(
-            # Only one candidate for now.
-            candidate_count=1,
-            # Stop sequences to prevent runaway generation.
-            # stop_sequences=['x'],
-            # Maximum number of tokens to generate.
-            # max_output_tokens=2048, # Default is often fine for structured JSON
-            temperature=0.3,  # Lower temperature for more deterministic JSON output
-            # top_p=1,
-            # top_k=1
+            f"Sending prompt to Vertex AI Gemini for user {user_id} (model: {GEMINI_MODEL_NAME_VERTEX}). Prompt snippet:\n{full_llm_prompt[:500]}..."
         )
-        # Safety settings (adjust as needed)
-        safety_settings = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE",
-            },
-        ]
 
-        response = gemini_model.generate_content(
+        # Configuration for Vertex AI Gemini
+        generation_config_vertex = GenerationConfig(
+            temperature=0.3,  # Lower temperature for more deterministic JSON
+            max_output_tokens=2048,  # Max tokens to generate
+            # top_p=0.95, # Example, adjust as needed
+            # top_k=40    # Example, adjust as needed
+        )
+
+        safety_settings_vertex = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
+
+        # Pass the prompt as a string directly to Vertex AI
+        response = gemini_vertex_model.generate_content(
             full_llm_prompt,
-            generation_config=generation_config,
-            safety_settings=safety_settings,
+            generation_config=generation_config_vertex,
+            safety_settings=safety_settings_vertex,
+            stream=False,  # Get the full response at once
         )
 
-        # Accessing the response text for Gemini API
-        if response.parts:
-            llm_response_raw = "".join(
-                part.text for part in response.parts if hasattr(part, "text")
-            )
-        elif (
-            hasattr(response, "text") and response.text
-        ):  # Fallback for older/different response structures
+        # Accessing the response text from Vertex AI SDK
+        # The structure is response.text
+        if hasattr(response, "text") and response.text:
             llm_response_raw = response.text
         else:
-            # Handle cases where response might be blocked or empty
-            llm_response_raw = "[]"  # Assume empty if no text parts
+            llm_response_raw = "[]"  # Assume empty if no text
+            # Check for blocked prompt or other issues
             if response.prompt_feedback and response.prompt_feedback.block_reason:
                 print(
-                    f"Prompt was blocked. Reason: {response.prompt_feedback.block_reason}"
+                    f"Prompt was blocked by Vertex AI. Reason: {response.prompt_feedback.block_reason}"
                 )
-                # Potentially raise an error or return a specific message
+            # Vertex AI responses also have `candidates`. If the response is empty, check candidates.
             elif not response.candidates or not response.candidates[0].content.parts:
-                print("Gemini response was empty or malformed (no content parts).")
+                print(
+                    "Vertex AI Gemini response was empty or malformed (no content parts in candidate)."
+                )
 
-        print(f"Raw LLM response for user {user_id}:\n{llm_response_raw}")
+        print(
+            f"Raw LLM response from Vertex AI for user {user_id}:\n{llm_response_raw}"
+        )
 
-        # 5. Parse the structured JSON response
-        # Clean the response: Gemini might sometimes include ```json ... ```
+        # 5. Parse the structured JSON response (same cleaning logic as before)
         cleaned_response_str = llm_response_raw.strip()
         if cleaned_response_str.startswith("```json"):
             cleaned_response_str = cleaned_response_str[7:]
-        if cleaned_response_str.startswith("```"):  # handles cases like ```\njson...
+        if cleaned_response_str.startswith("```"):
             cleaned_response_str = cleaned_response_str[3:]
         if cleaned_response_str.endswith("```"):
             cleaned_response_str = cleaned_response_str[:-3]
         cleaned_response_str = cleaned_response_str.strip()
 
-        if not cleaned_response_str:  # If after cleaning, string is empty
+        if not cleaned_response_str:
             print(f"LLM response was empty after cleaning for user {user_id}.")
             selected_matches_from_llm_data = []
         else:
@@ -331,9 +322,8 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
                 continue  # Skip malformed items
 
     except Exception as e:
-        # This catches errors from the Gemini API call itself or initial parsing
         print(
-            f"ERROR: Exception during Gemini API call or processing for user {user_id}: {str(e)}"
+            f"ERROR: Exception during Vertex AI Gemini API call or processing for user {user_id}: {str(e)}"
         )
         # Log the full prompt if an error occurs during API call
         error_prompt_log = (
@@ -345,7 +335,8 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
             f"LLM Prompt that may have caused error (first 1000 chars): {error_prompt_log[:1000]}"
         )
         raise HTTPException(
-            status_code=500, detail=f"Error interacting with LLM: {str(e)}"
+            status_code=500,
+            detail=f"Error interacting with LLM via Vertex AI: {str(e)}",
         )
 
     # 6. Store the generated reminder instructions in Firestore
@@ -375,13 +366,19 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
             for old_reminder_snap in existing_reminders_query:
                 delete_batch.delete(old_reminder_snap.reference)
                 deleted_old_count += 1
-                if deleted_old_count % 490 == 0:  # Commit batch if it gets large
+                if deleted_old_count > 0 and deleted_old_count % 490 == 0:
                     delete_batch.commit()
                     delete_batch = db.batch()
-            if (
-                deleted_old_count % 490 != 0 and deleted_old_count > 0
-            ):  # commit remaining
-                delete_batch.commit()
+            if deleted_old_count > 0 and (
+                deleted_old_count % 490 != 0
+                or deleted_old_count < 490
+                and len(list(existing_reminders_query)) == deleted_old_count
+            ):  # commit remaining if any
+                # The list(existing_reminders_query) part is tricky because stream is consumed.
+                # A simpler check for the last batch commit:
+                if delete_batch._mutations:  # Check if batch has pending operations
+                    delete_batch.commit()
+
             print(
                 f"Deleted {deleted_old_count} old pending reminders for user {user_id} for the processed fixtures."
             )
@@ -423,8 +420,7 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
                     "custom_message": trigger.custom_message,
                     "actual_reminder_time_utc": actual_reminder_time,
                     "status": "pending",
-                    "llm_prompt_used_brief": full_llm_prompt[:500]
-                    + "...",  # Store a brief version or hash
+                    "llm_prompt_used_brief": f"{full_llm_prompt[:500]}...",  # Store a brief version or hash
                     # "llm_response_raw": llm_response_raw, # Be careful storing large raw responses
                     "created_at": created_at,
                     "updated_at": created_at,
@@ -438,20 +434,19 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
                     batch = db.batch()
                     items_in_batch = 0
 
-        if items_in_batch > 0:
+        if items_in_batch > 0:  # Commit any remaining batch operations
             batch.commit()
 
     return {
-        "message": f"Scout processing complete for user {user_id}.",
+        "message": f"Scout processing complete for user {user_id} via Vertex AI.",
         "user_id": user_id,
         "fixtures_analyzed_count": len(upcoming_fixtures_for_llm),
         "matches_selected_by_llm": len(selected_matches_from_llm),
         "reminders_created": reminders_created_count,
-        "raw_llm_output_sample": llm_response_raw[:200]
-        + "...",  # Sample for quick check
+        "raw_llm_output_sample": f"{llm_response_raw[:200]}...",
     }
 
 
 @app.get("/")
 async def read_root():
-    return {"message": "Welcome to the Fixture Scout AI - Scout Service"}
+    return {"message": "Welcome to the Fixture Scout AI - Scout Service (Vertex AI)"}
