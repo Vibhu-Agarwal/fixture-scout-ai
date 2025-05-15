@@ -363,21 +363,21 @@ async def process_user_fixtures(request: ScoutRequest = Body(...)):
 
             delete_batch = db.batch()
             deleted_old_count = 0
+            operations_in_current_delete_batch = 0  # Initialize counter for this batch
+
             for old_reminder_snap in existing_reminders_query:
                 delete_batch.delete(old_reminder_snap.reference)
                 deleted_old_count += 1
-                if deleted_old_count > 0 and deleted_old_count % 490 == 0:
+                operations_in_current_delete_batch += 1
+
+                if operations_in_current_delete_batch >= 490:  # Firestore batch limit
                     delete_batch.commit()
-                    delete_batch = db.batch()
-            if deleted_old_count > 0 and (
-                deleted_old_count % 490 != 0
-                or deleted_old_count < 490
-                and len(list(existing_reminders_query)) == deleted_old_count
-            ):  # commit remaining if any
-                # The list(existing_reminders_query) part is tricky because stream is consumed.
-                # A simpler check for the last batch commit:
-                if delete_batch._mutations:  # Check if batch has pending operations
-                    delete_batch.commit()
+                    delete_batch = db.batch()  # Start a new batch
+                    operations_in_current_delete_batch = 0  # Reset counter
+
+            # After the loop, commit if there are any remaining operations in the current batch
+            if operations_in_current_delete_batch > 0:
+                delete_batch.commit()
 
             print(
                 f"Deleted {deleted_old_count} old pending reminders for user {user_id} for the processed fixtures."
