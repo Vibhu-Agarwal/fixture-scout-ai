@@ -3,26 +3,27 @@ import logging
 import datetime
 import uuid
 import json
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
-from google.cloud import (
-    firestore,
-)  # For type hinting if needed, db interaction via client
-from vertexai.generative_models import (  # For type hinting
+from pydantic import ValidationError  # For catching Pydantic validation errors
+from google.cloud import firestore
+from vertexai.generative_models import (
     GenerativeModel,
     GenerationConfig,
     HarmCategory,
     HarmBlockThreshold,
 )
 
-from ..config import settings  # Relative imports for modules within the 'app' package
+from ..config import settings
 from ..firestore_client import get_firestore_client
 from ..vertex_ai_client import get_vertex_ai_gemini_client
 from ..llm_prompts import construct_gemini_scout_prompt
 from ..models import (
     FixtureForLLM,
     LLMSelectedFixtureResponse,
-    FixtureDoc,  # Representing data structure from Firestore
+    UserPreferenceDoc,
+    FixtureDoc,
+    ReminderDoc,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,12 @@ class LLMResponseError(ReminderProcessingError):
     pass
 
 
+class DataValidationError(ReminderProcessingError):
+    """Custom exception for data validation errors from Firestore."""
+
+    pass
+
+
 async def process_fixtures_for_user(user_id: str) -> Dict:
     """
     Processes upcoming fixtures for a given user:
@@ -53,15 +60,12 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     gemini_model = get_vertex_ai_gemini_client()
 
     # 1. Fetch user's preference
-    optimized_llm_prompt_text, user_exists = _fetch_user_preference(db, user_id)
-    if not user_exists:
+    user_pref_doc = _fetch_user_preference_doc(db, user_id)
+    if not user_pref_doc or not user_pref_doc.optimized_llm_prompt:
         raise ReminderProcessingError(
-            f"User with ID {user_id} not found or preferences missing."
+            f"User preferences or optimized LLM prompt not found/invalid for user ID {user_id}."
         )
-    if not optimized_llm_prompt_text:
-        raise ReminderProcessingError(
-            f"Optimized LLM prompt not set for user {user_id}."
-        )
+    optimized_llm_prompt_text = user_pref_doc.optimized_llm_prompt
 
     # 2. Fetch upcoming fixtures
     upcoming_fixtures_for_llm, original_fixtures_map = _fetch_upcoming_fixtures(db)
@@ -119,31 +123,43 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     }
 
 
-def _fetch_user_preference(
+def _fetch_user_preference_doc(
     db: firestore.Client, user_id: str
-) -> Tuple[str | None, bool]:
-    """Fetches the optimized LLM prompt for the user."""
+) -> Optional[UserPreferenceDoc]:
+    """Fetches and validates the user preference document."""
     preference_doc_ref = db.collection(settings.USER_PREFERENCES_COLLECTION).document(
         user_id
     )
-    preference_doc = preference_doc_ref.get()
+    preference_snap = preference_doc_ref.get()
 
-    if not preference_doc.exists:
-        logger.warning(f"Preferences for user ID {user_id} not found.")
-        return None, False
+    if not preference_snap.exists:
+        logger.warning(f"Preferences document for user ID {user_id} not found.")
+        return None
 
-    user_preferences = preference_doc.to_dict()
-    optimized_llm_prompt = user_preferences.get("optimized_llm_prompt")
-    logger.debug(
-        f"User {user_id} optimized prompt fetched: {optimized_llm_prompt[:100] if optimized_llm_prompt else 'None'}..."
-    )
-    return optimized_llm_prompt, True
+    try:
+        user_pref_data = preference_snap.to_dict()
+        user_pref_doc = UserPreferenceDoc(**user_pref_data)
+        logger.debug(f"User {user_id} preferences fetched and validated.")
+        return user_pref_doc
+    except ValidationError as e:
+        logger.error(
+            f"Validation error for user preference doc {user_id}: {e}", exc_info=True
+        )
+        raise DataValidationError(f"Invalid user preference data for user {user_id}.")
+    except Exception as e:  # Catch any other unexpected error during fetching/parsing
+        logger.error(
+            f"Unexpected error fetching user preference doc {user_id}: {e}",
+            exc_info=True,
+        )
+        raise ReminderProcessingError(
+            f"Could not retrieve user preferences for {user_id}."
+        )
 
 
 def _fetch_upcoming_fixtures(
     db: firestore.Client,
-) -> Tuple[List[FixtureForLLM], Dict[str, Dict]]:
-    """Fetches upcoming fixtures from Firestore and prepares them for the LLM."""
+) -> Tuple[List[FixtureForLLM], Dict[str, FixtureDoc]]:
+    """Fetches upcoming fixtures from Firestore, validates them, and prepares them for the LLM."""
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     future_cutoff_utc = now_utc + datetime.timedelta(
         days=settings.FIXTURE_LOOKOUT_WINDOW_DAYS
@@ -161,52 +177,43 @@ def _fetch_upcoming_fixtures(
     )
 
     upcoming_fixtures_for_llm: List[FixtureForLLM] = []
-    original_fixtures_map: Dict[str, Dict] = (
-        {}
-    )  # Using Dict to represent FixtureDoc like structure
+    original_fixtures_map: Dict[str, FixtureDoc] = {}
 
     for fixture_snap in fixtures_query:
         try:
-            # Attempt to parse with Pydantic for validation, though Firestore returns dict
             fixture_data_dict = fixture_snap.to_dict()
-            # fixture_doc = FixtureDoc(**fixture_data_dict) # Optional: Validate against Pydantic model
-            original_fixtures_map[fixture_data_dict["fixture_id"]] = fixture_data_dict
+            # Validate fixture data against FixtureDoc model
+            fixture_doc = FixtureDoc(**fixture_data_dict)
+            original_fixtures_map[fixture_doc.fixture_id] = fixture_doc
 
-            match_dt_utc = fixture_data_dict.get("match_datetime_utc")
-            match_datetime_utc_str = (
-                match_dt_utc.isoformat()
-                if isinstance(match_dt_utc, datetime.datetime)
-                else str(match_dt_utc)
-            )
-
-            # Handle potentially missing nested fields gracefully
-            home_team_name = fixture_data_dict.get("home_team", {}).get(
-                "name", "Unknown Home"
-            )
-            away_team_name = fixture_data_dict.get("away_team", {}).get(
-                "name", "Unknown Away"
-            )
-            league_name = fixture_data_dict.get("league_name", "Unknown League")
+            match_datetime_utc_str = fixture_doc.match_datetime_utc.isoformat()
 
             upcoming_fixtures_for_llm.append(
                 FixtureForLLM(
-                    fixture_id=fixture_data_dict["fixture_id"],
-                    home_team_name=home_team_name,
-                    away_team_name=away_team_name,
-                    league_name=league_name,
+                    fixture_id=fixture_doc.fixture_id,
+                    home_team_name=fixture_doc.home_team.get("name", "Unknown Home"),
+                    away_team_name=fixture_doc.away_team.get("name", "Unknown Away"),
+                    league_name=fixture_doc.league_name,
                     match_datetime_utc_str=match_datetime_utc_str,
-                    stage=fixture_data_dict.get("stage"),
-                    raw_metadata_blob=fixture_data_dict.get("raw_metadata_blob"),
+                    stage=fixture_doc.stage,
+                    raw_metadata_blob=fixture_doc.raw_metadata_blob,
                 )
             )
+        except ValidationError as e:
+            logger.error(
+                f"Validation error for fixture doc {fixture_snap.id}: {e}. Data: {fixture_data_dict}",
+                exc_info=True,
+            )
+            # Optionally, raise DataValidationError or just skip
+            continue  # Skip this fixture if it's invalid
         except Exception as e:
             logger.error(
                 f"Error processing fixture {fixture_snap.id}: {e}", exc_info=True
             )
-            continue  # Skip this fixture
+            continue
 
     logger.info(
-        f"Fetched {len(upcoming_fixtures_for_llm)} upcoming fixtures for LLM processing."
+        f"Fetched and validated {len(upcoming_fixtures_for_llm)} upcoming fixtures for LLM."
     )
     return upcoming_fixtures_for_llm, original_fixtures_map
 
@@ -221,7 +228,7 @@ def _call_llm_and_parse_response(
         )
         generation_config = GenerationConfig(
             temperature=0.2,
-            max_output_tokens=8192,  # Increased slightly just in case of many fixtures
+            max_output_tokens=8192,
             # top_p=0.95,
             # top_k=40
         )
@@ -243,7 +250,7 @@ def _call_llm_and_parse_response(
         if hasattr(response, "text") and response.text:
             llm_response_raw_text = response.text
         else:
-            llm_response_raw_text = "[]"  # Default to empty array if no text
+            llm_response_raw_text = "[]"
             if response.prompt_feedback and response.prompt_feedback.block_reason:
                 logger.warning(
                     f"Prompt for user {user_id} was blocked by Vertex AI. Reason: {response.prompt_feedback.block_reason_message or response.prompt_feedback.block_reason}"
@@ -259,7 +266,6 @@ def _call_llm_and_parse_response(
                 logger.warning(
                     f"Vertex AI Gemini response for user {user_id} was empty or malformed (no content parts)."
                 )
-                # No specific error to raise here, will result in empty list of matches
 
         logger.info(
             f"Raw LLM response snippet for user {user_id}: {llm_response_raw_text[:300]}..."
@@ -296,23 +302,21 @@ def _call_llm_and_parse_response(
             raise LLMResponseError(
                 f"LLM returned invalid JSON. Raw: {llm_response_raw_text[:200]}..."
             )
-        except Exception as e:  # Pydantic validation or other errors
+        except (
+            ValidationError
+        ) as e:  # Catch Pydantic validation errors for LLMSelectedFixtureResponse
             logger.error(
-                f"Error validating LLM response items for user {user_id}: {e}",
+                f"Error validating LLM response structure for user {user_id}: {e}",
                 exc_info=True,
             )
-            # Decide if to raise, or return partial results, or empty. For now, raise.
-            raise LLMResponseError(
-                f"Error validating LLM response structure. Error: {e}"
-            )
+            raise LLMResponseError(f"LLM response structure invalid. Error: {e}")
 
     except Exception as e:
         logger.error(
             f"Exception during Vertex AI Gemini API call or parsing for user {user_id}: {str(e)}",
             exc_info=True,
         )
-        # Propagate the error after logging
-        if not isinstance(e, LLMResponseError):  # Avoid re-wrapping our custom error
+        if not isinstance(e, LLMResponseError):
             raise LLMResponseError(f"General error during LLM interaction: {str(e)}")
         else:
             raise e
@@ -358,30 +362,25 @@ def _store_new_reminders(
     db: firestore.Client,
     user_id: str,
     selected_matches: List[LLMSelectedFixtureResponse],
-    original_fixtures_map: Dict[str, Dict],
+    original_fixtures_map: Dict[str, FixtureDoc],
     full_llm_prompt_text: str,
     llm_response_raw_text: str,
 ) -> int:
-    """Stores the new reminders generated by the LLM in Firestore."""
+    """Stores the new reminders (validated with ReminderDoc) generated by the LLM in Firestore."""
     create_batch = db.batch()
     items_in_create_batch = 0
     reminders_created_count = 0
     created_at_ts = datetime.datetime.now(datetime.timezone.utc)
 
     for llm_match_info in selected_matches:
-        original_fixture = original_fixtures_map.get(llm_match_info.fixture_id)
-        if not original_fixture:
+        original_fixture_doc = original_fixtures_map.get(llm_match_info.fixture_id)
+        if not original_fixture_doc:
             logger.warning(
                 f"LLM returned fixture_id {llm_match_info.fixture_id} not found in original fixtures map for user {user_id}. Skipping."
             )
             continue
 
-        kickoff_time_utc_dt = original_fixture.get("match_datetime_utc")
-        if not isinstance(kickoff_time_utc_dt, datetime.datetime):
-            logger.warning(
-                f"Fixture {llm_match_info.fixture_id} for user {user_id} has invalid kickoff_time_utc type: {type(kickoff_time_utc_dt)}. Skipping."
-            )
-            continue
+        kickoff_time_utc_dt = original_fixture_doc.match_datetime_utc
 
         for trigger in llm_match_info.reminder_triggers:
             reminder_id = str(uuid.uuid4())
@@ -389,39 +388,47 @@ def _store_new_reminders(
                 minutes=trigger.reminder_offset_minutes_before_kickoff
             )
 
-            reminder_doc_data = {
-                "reminder_id": reminder_id,
-                "user_id": user_id,
-                "fixture_id": llm_match_info.fixture_id,
-                "reason_for_selection": llm_match_info.reason,
-                "importance_score": llm_match_info.importance_score,
-                "kickoff_time_utc": kickoff_time_utc_dt,
-                "reminder_offset_minutes_before_kickoff": trigger.reminder_offset_minutes_before_kickoff,
-                "reminder_mode": trigger.reminder_mode,
-                "custom_message": trigger.custom_message,
-                "actual_reminder_time_utc": actual_reminder_time,
-                "status": "pending",
-                "llm_prompt_used_brief": f"{full_llm_prompt_text[:200]}... (truncated)",
-                "llm_response_snippet": (
-                    llm_response_raw_text[:200] + "..."
-                    if llm_response_raw_text
-                    else "N/A"
-                ),
-                "created_at": created_at_ts,
-                "updated_at": created_at_ts,
-            }
-            # reminder_pydantic_doc = ReminderDoc(**reminder_doc_data) # Optional: validate before storing
+            try:
+                reminder_data = ReminderDoc(
+                    reminder_id=reminder_id,
+                    user_id=user_id,
+                    fixture_id=llm_match_info.fixture_id,
+                    reason_for_selection=llm_match_info.reason,
+                    importance_score=llm_match_info.importance_score,
+                    kickoff_time_utc=kickoff_time_utc_dt,
+                    reminder_offset_minutes_before_kickoff=trigger.reminder_offset_minutes_before_kickoff,
+                    reminder_mode=trigger.reminder_mode,
+                    custom_message=trigger.custom_message,
+                    actual_reminder_time_utc=actual_reminder_time,
+                    status="pending",  # Default status
+                    llm_prompt_used_brief=f"{full_llm_prompt_text[:200]}... (truncated)",
+                    llm_response_snippet=(
+                        llm_response_raw_text[:200] + "..."
+                        if llm_response_raw_text
+                        else "N/A"
+                    ),
+                    created_at=created_at_ts,
+                    updated_at=created_at_ts,
+                )
+                doc_ref = db.collection(settings.REMINDERS_COLLECTION).document(
+                    reminder_id
+                )
+                # Use model_dump() to get a dict suitable for Firestore
+                create_batch.set(doc_ref, reminder_data.model_dump())
+                reminders_created_count += 1
+                items_in_create_batch += 1
 
-            doc_ref = db.collection(settings.REMINDERS_COLLECTION).document(reminder_id)
-            create_batch.set(
-                doc_ref, reminder_doc_data
-            )  # reminder_pydantic_doc.model_dump() if validated
-            reminders_created_count += 1
-            items_in_create_batch += 1
-            if items_in_create_batch >= 490:
-                create_batch.commit()
-                create_batch = db.batch()
-                items_in_create_batch = 0
+                if items_in_create_batch >= 490:
+                    create_batch.commit()
+                    create_batch = db.batch()
+                    items_in_create_batch = 0
+            except ValidationError as e:
+                logger.error(
+                    f"Validation error creating reminder doc for fixture {llm_match_info.fixture_id}, user {user_id}: {e}",
+                    exc_info=True,
+                )
+                # Decide if to skip this specific reminder or halt
+                continue  # Skip this reminder trigger
 
     if items_in_create_batch > 0:
         create_batch.commit()
