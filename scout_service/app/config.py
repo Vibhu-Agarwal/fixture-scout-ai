@@ -6,6 +6,9 @@ load_dotenv()  # Load environment variables from .env file at the earliest
 
 
 class Settings:
+    # Server
+    SCOUT_SERVICE_INTERNAL_URL: str | None = os.getenv("SCOUT_SERVICE_INTERNAL_URL")
+
     # Firestore
     FIRESTORE_DATABASE_NAME: str | None = os.getenv("FIRESTORE_DATABASE_NAME")
 
