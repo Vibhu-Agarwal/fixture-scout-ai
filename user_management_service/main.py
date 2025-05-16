@@ -8,6 +8,10 @@ from google.cloud import firestore
 import datetime
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
+
 
 DATABASE_NAME = os.getenv("FIRESTORE_DATABASE_NAME")  # Will be None if not set
 if DATABASE_NAME:
