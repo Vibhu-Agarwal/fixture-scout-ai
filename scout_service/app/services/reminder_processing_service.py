@@ -87,8 +87,8 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
         f"Constructed LLM prompt for user {user_id} (first 500 chars): {full_llm_prompt[:500]}..."
     )
 
-    llm_response_raw_text, selected_matches_from_llm = _call_llm_and_parse_response(
-        gemini_model, full_llm_prompt, user_id
+    llm_response_raw_text, selected_matches_from_llm = (
+        await _call_llm_and_parse_response(gemini_model, full_llm_prompt, user_id)
     )
 
     # 4. Store reminders
@@ -218,7 +218,7 @@ def _fetch_upcoming_fixtures(
     return upcoming_fixtures_for_llm, original_fixtures_map
 
 
-def _call_llm_and_parse_response(
+async def _call_llm_and_parse_response(
     gemini_model: GenerativeModel, full_llm_prompt: str, user_id: str
 ) -> Tuple[str, List[LLMSelectedFixtureResponse]]:
     """Calls the LLM and parses its JSON response."""
@@ -239,14 +239,16 @@ def _call_llm_and_parse_response(
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
 
-        response = gemini_model.generate_content(
+        response = await gemini_model.generate_content_async(
             full_llm_prompt,
             generation_config=generation_config,
             safety_settings=safety_settings,
-            stream=False,
+            stream=False,  # stream=True would also be async and return an AsyncIterable
         )
 
         llm_response_raw_text = ""
+        # The response structure for async might be slightly different or handled the same way
+        # Assuming response.text is still the way to get it for non-streaming async
         if hasattr(response, "text") and response.text:
             llm_response_raw_text = response.text
         else:
@@ -262,7 +264,7 @@ def _call_llm_and_parse_response(
                 not response.candidates
                 or not hasattr(response.candidates[0], "content")
                 or not response.candidates[0].content.parts
-            ):
+            ):  # Check this structure based on SDK docs for async if it differs
                 logger.warning(
                     f"Vertex AI Gemini response for user {user_id} was empty or malformed (no content parts)."
                 )
@@ -302,9 +304,7 @@ def _call_llm_and_parse_response(
             raise LLMResponseError(
                 f"LLM returned invalid JSON. Raw: {llm_response_raw_text[:200]}..."
             )
-        except (
-            ValidationError
-        ) as e:  # Catch Pydantic validation errors for LLMSelectedFixtureResponse
+        except ValidationError as e:
             logger.error(
                 f"Error validating LLM response structure for user {user_id}: {e}",
                 exc_info=True,
