@@ -56,7 +56,7 @@ async def fetch_and_process_due_reminders(
     due_reminders_query = (
         db.collection(settings.REMINDERS_COLLECTION)
         .where("status", "==", "pending")
-        .where("actual_reminder_time_utc", "<=", now_utc)
+        # .where("actual_reminder_time_utc", "<=", now_utc)
         .limit(200)  # Keep the limit for safety
         .stream()
     )
