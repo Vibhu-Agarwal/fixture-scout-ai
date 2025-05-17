@@ -11,6 +11,7 @@ from google.api_core.exceptions import (
     NotFound as PubSubTopicNotFound,
     AlreadyExists as PubSubTopicAlreadyExists,
 )
+from google.cloud import firestore
 
 
 from .utils.logging_config import setup_logging
