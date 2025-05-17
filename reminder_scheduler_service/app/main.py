@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from google.cloud import pubsub_v1 # Import Pub/Sub client
 from google.cloud.pubsub_v1.publisher.exceptions import MessageTooLargeError
 from google.api_core.exceptions import NotFound as PubSubTopicNotFound
+from google.api_core.exceptions import AlreadyExists, NotFound
 
 from .utils.logging_config import setup_logging
 setup_logging()
@@ -24,22 +25,63 @@ logger = logging.getLogger(__name__)
 # Global Pub/Sub Publisher client, initialized during lifespan
 publisher_client: pubsub_v1.PublisherClient | None = None
 
+async def _ensure_pubsub_topic_exists(publisher: pubsub_v1.PublisherClient, project_id: str, topic_id: str):
+    """Ensures a Pub/Sub topic exists, creating it if necessary."""
+    topic_path = publisher.topic_path(project_id, topic_id)
+    try:
+        publisher.get_topic(topic=topic_path) # Changed from request= to topic=
+        logger.info(f"Pub/Sub topic '{topic_path}' already exists.")
+    except NotFound:
+        logger.info(f"Pub/Sub topic '{topic_path}' not found. Creating it...")
+        try:
+            publisher.create_topic(name=topic_path) # Changed from request= to name=
+            logger.info(f"Pub/Sub topic '{topic_path}' created successfully.")
+        except AlreadyExists:
+            logger.info(f"Pub/Sub topic '{topic_path}' was created by another process concurrently.")
+        except Exception as e_create:
+            logger.error(f"Failed to create Pub/Sub topic '{topic_path}': {e_create}", exc_info=True)
+            raise # Re-raise to indicate a startup problem
+    except Exception as e_get:
+        logger.error(f"Failed to check existence of Pub/Sub topic '{topic_path}': {e_get}", exc_info=True)
+        raise # Re-raise
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global publisher_client
     logger.info("Reminder Scheduler Service starting up...")
     try:
-        get_firestore_client() # Initialize Firestore client
-        if not os.getenv("PUBSUB_EMULATOR_HOST") and not settings.GCP_PROJECT_ID:
-            logger.critical("GCP_PROJECT_ID is not set. Pub/Sub Publisher will likely fail outside emulator.")
-            # Decide if to raise an error and stop startup
-        publisher_client = pubsub_v1.PublisherClient() # Initialize Pub/Sub Publisher
-        logger.info("Firestore client and Pub/Sub Publisher client initialized successfully on startup.")
+        get_firestore_client()
+        
+        # Determine project_id for Pub/Sub operations
+        project_id_for_pubsub = settings.GCP_PROJECT_ID
+        if os.getenv("PUBSUB_EMULATOR_HOST") and not project_id_for_pubsub:
+            # If using emulator and no project_id set, you might use a default/dummy for topic creation
+            # For this example, let's assume settings.GCP_PROJECT_ID should be set.
+            # Or, if you know the emulator uses a specific default, use that.
+            logger.warning("GCP_PROJECT_ID not set; Pub/Sub topic creation/check might behave unexpectedly with emulator without a project context.")
+            # Fallback to a dummy project for emulator if absolutely necessary and client allows
+            # project_id_for_pubsub = "your-dummy-emulator-project" 
+        
+        if not project_id_for_pubsub and not os.getenv("PUBSUB_EMULATOR_HOST"):
+             logger.critical("GCP_PROJECT_ID is not set. Cannot initialize Pub/Sub topics for real environment.")
+             raise ValueError("GCP_PROJECT_ID must be set for Pub/Sub operations outside the emulator.")
+
+        publisher_client = pubsub_v1.PublisherClient()
+        logger.info("Firestore client and Pub/Sub Publisher client initialized.")
+
+        # Ensure topics exist (only if project_id_for_pubsub is available)
+        if project_id_for_pubsub: # Proceed only if we have a project ID
+            topics = [settings.EMAIL_NOTIFICATIONS_TOPIC_ID, settings.PHONE_MOCK_NOTIFICATIONS_TOPIC_ID]
+            for topic in topics:
+                await _ensure_pubsub_topic_exists(publisher_client, project_id_for_pubsub, topic)
+        else:
+            logger.warning("Skipping Pub/Sub topic existence check/creation as GCP_PROJECT_ID is not definitively set for non-emulator or emulator context.")
+
+
     except Exception as e:
-        logger.critical(f"Failed to initialize clients on startup: {e}", exc_info=True)
+        logger.critical(f"Failed to initialize clients or Pub/Sub topics on startup: {e}", exc_info=True)
+        # Decide if app should exit or continue in a degraded state
     yield
-    # No explicit close needed for PublisherClient in recent versions for typical usage.
-    # If using custom transports or batch settings with explicit shutdown, you might add it.
     logger.info("Reminder Scheduler Service shutting down...")
 
 
