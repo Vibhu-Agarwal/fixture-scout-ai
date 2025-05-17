@@ -18,7 +18,12 @@ PUBSUB_EMULATOR_HOST = os.getenv("PUBSUB_EMULATOR_HOST")
 # These should match the TOPIC_IDs used by your publisher
 TOPIC_IDS = [
     os.getenv("EMAIL_NOTIFICATIONS_TOPIC_ID", "email-notifications-topic"),
-    os.getenv("PHONE_MOCK_NOTIFICATIONS_TOPIC_ID", "mock-phone-call-notifications-topic"),
+    os.getenv(
+        "PHONE_MOCK_NOTIFICATIONS_TOPIC_ID", "mock-phone-call-notifications-topic"
+    ),
+    os.getenv(
+        "NOTIFICATION_STATUS_UPDATE_TOPIC_ID", "notification-status-updates-topic"
+    ),
     # Add any other topic IDs you might have
 ]
 
@@ -60,17 +65,21 @@ from google.cloud.pubsub_v1.subscriber.message import Message
 
 from typing import Callable
 
-def get_callback(subscription: str) -> Callable[['Message'], None]:
+
+def get_callback(subscription: str) -> Callable[["Message"], None]:
     return lambda message: callback(message, subscription)
+
 
 def callback(message: Message, subscription: str) -> None:
     """
     Callback function to process received messages.
     """
     print(f"\n--- New Message Received ---")
-    print(f"Subscription: {subscription}") # The full subscription path
+    print(f"Subscription: {subscription}")  # The full subscription path
 
     try:
+        print("Raw Message:", message)
+        print("message.data:", message.data)
         data_str = message.data.decode("utf-8")
         data_dict = json.loads(data_str)
         print("Data (JSON Parsed):")
@@ -84,24 +93,28 @@ def callback(message: Message, subscription: str) -> None:
         print("Attributes:")
         for key, value in message.attributes.items():
             print(f"  {key}: {value}")
-    
+
     print(f"--------------------------")
-    message.ack() # Acknowledge the message so Pub/Sub doesn't redeliver it
+    message.ack()  # Acknowledge the message so Pub/Sub doesn't redeliver it
 
 
 try:
     for topic_id in TOPIC_IDS:
         topic_path = subscriber.topic_path(GCP_PROJECT_ID, topic_id)
-        
+
         # Create a unique subscription name for each run to avoid conflicts
         # and ensure we get messages published *after* this script starts.
         # Subscriptions are persistent, so using a fixed name means you might
         # see old messages if the script crashed before acking.
         # A timestamp or UUID makes it unique for this run.
         subscription_id = f"{topic_id}-subscriber-script-{int(time.time())}"
-        subscription_path = subscriber.subscription_path(GCP_PROJECT_ID, subscription_id)
-        
-        print(f"\nAttempting to create/use subscription '{subscription_path}' for topic '{topic_path}'...")
+        subscription_path = subscriber.subscription_path(
+            GCP_PROJECT_ID, subscription_id
+        )
+
+        print(
+            f"\nAttempting to create/use subscription '{subscription_path}' for topic '{topic_path}'..."
+        )
 
         try:
             # Create the subscription. If it already exists (unlikely with unique name),
@@ -112,8 +125,12 @@ try:
             )
             print(f"Subscription '{subscription.name}' created for topic '{topic_id}'.")
             subscription_paths.append(subscription_path)
-        except Exception as e_create_sub: # Could be AlreadyExists if name wasn't unique
-            print(f"Warning: Could not create subscription '{subscription_path}' (maybe it exists or topic issue?): {e_create_sub}")
+        except (
+            Exception
+        ) as e_create_sub:  # Could be AlreadyExists if name wasn't unique
+            print(
+                f"Warning: Could not create subscription '{subscription_path}' (maybe it exists or topic issue?): {e_create_sub}"
+            )
             # Try to use it anyway if it's an "AlreadyExists" type error, otherwise skip
             # For simplicity, if create fails with unique name, it's likely a problem.
             # If using a fixed name, you'd try get_subscription here.
@@ -121,18 +138,19 @@ try:
             print(f"Skipping subscription to topic '{topic_id}' due to error.")
             continue
 
-
         # Start pulling messages
         # The `subscribe` method is non-blocking and returns a `StreamingPullFuture`.
         # The `callback` function will be called on a separate thread by the client library.
-        streaming_pull_future = subscriber.subscribe(subscription_path, callback=get_callback(subscription_path))
+        streaming_pull_future = subscriber.subscribe(
+            subscription_path, callback=get_callback(subscription_path)
+        )
         print(f"Listening for messages on '{subscription_path}'...")
 
     # Keep the main thread alive to allow callbacks to run on their threads.
     # The `streaming_pull_future.result()` would block indefinitely.
     # We want to listen on multiple subscriptions.
     while True:
-        time.sleep(60) # Keep alive, or use future.result() if only one subscription
+        time.sleep(60)  # Keep alive, or use future.result() if only one subscription
         # For multiple subscriptions, this loop just keeps the main thread from exiting.
 
 except KeyboardInterrupt:
