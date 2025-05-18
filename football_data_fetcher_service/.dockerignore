@@ -1,0 +1,17 @@
+# .dockerignore (place in each service's root directory)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.env.*
+.pytest_cache/
+.coverage
+.git/
+.gitignore
+Dockerfile
+*.md
+# Add any other local development files or large data files not needed in the image
