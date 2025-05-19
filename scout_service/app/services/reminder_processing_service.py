@@ -94,7 +94,7 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     # 4. Store reminders
     reminders_created_count = 0
     if selected_matches_from_llm:
-        _clear_old_pending_reminders(
+        await _clear_old_pending_reminders(
             db, user_id, [f.fixture_id for f in upcoming_fixtures_for_llm]
         )
         reminders_created_count = _store_new_reminders(
@@ -180,6 +180,7 @@ def _fetch_upcoming_fixtures(
     original_fixtures_map: Dict[str, FixtureDoc] = {}
 
     for fixture_snap in fixtures_query:
+        fixture_data_dict = None
         try:
             fixture_data_dict = fixture_snap.to_dict()
             # Validate fixture data against FixtureDoc model
@@ -322,39 +323,92 @@ async def _call_llm_and_parse_response(
             raise e
 
 
-def _clear_old_pending_reminders(
+async def _clear_old_pending_reminders(  # Make it async if db operations become async later, for now it's fine
     db: firestore.Client, user_id: str, fixture_ids_in_llm_input: List[str]
 ):
     """Deletes old 'pending' reminders for the given user and fixture IDs."""
     if not fixture_ids_in_llm_input:
+        logger.info(
+            f"No fixture IDs provided to clear old reminders for user {user_id}."
+        )
         return
 
     logger.info(
-        f"Clearing old pending reminders for user {user_id} for {len(fixture_ids_in_llm_input)} fixtures."
-    )
-    existing_reminders_query = (
-        db.collection(settings.REMINDERS_COLLECTION)
-        .where("user_id", "==", user_id)
-        .where("fixture_id", "in", fixture_ids_in_llm_input)
-        .where("status", "==", "pending")
-        .stream()
+        f"Clearing old pending reminders for user {user_id} for {len(fixture_ids_in_llm_input)} potential fixture IDs."
     )
 
-    delete_batch = db.batch()
-    deleted_old_count = 0
-    ops_in_batch = 0
-    for old_reminder_snap in existing_reminders_query:
-        delete_batch.delete(old_reminder_snap.reference)
-        deleted_old_count += 1
-        ops_in_batch += 1
-        if ops_in_batch >= 490:
-            delete_batch.commit()
+    MAX_IN_QUERY_VALUES = 30  # Firestore limit for 'IN' operator
+    total_deleted_old_count = 0
+
+    # Process fixture_ids in chunks
+    for i in range(0, len(fixture_ids_in_llm_input), MAX_IN_QUERY_VALUES):
+        chunk_fixture_ids = fixture_ids_in_llm_input[i : i + MAX_IN_QUERY_VALUES]
+
+        logger.debug(
+            f"Processing chunk {i} of {len(chunk_fixture_ids)} fixture IDs for user {user_id} to clear old reminders."
+        )
+
+        try:
+            existing_reminders_query = (
+                db.collection(settings.REMINDERS_COLLECTION)
+                .where("user_id", "==", user_id)
+                .where("fixture_id", "in", chunk_fixture_ids)
+                .where("status", "==", "pending")
+                .stream()  # This is a synchronous call
+            )
+
+            # Collect references to delete in batches to avoid too many individual writes
+            # and to respect Firestore batch limits for writes (500 ops per batch)
+            docs_to_delete_refs = [
+                old_reminder_snap.reference
+                for old_reminder_snap in existing_reminders_query
+            ]
+
+            if not docs_to_delete_refs:
+                logger.debug(
+                    f"No 'pending' reminders found for user {user_id} in fixture ID chunk: {chunk_fixture_ids}"
+                )
+                continue
+
+            logger.info(
+                f"Found {len(docs_to_delete_refs)} old 'pending' reminders to delete for user {user_id} in current chunk."
+            )
+
             delete_batch = db.batch()
-            ops_in_batch = 0
-    if ops_in_batch > 0:
-        delete_batch.commit()
+            ops_in_current_write_batch = 0
+            MAX_OPS_PER_WRITE_BATCH = 490  # Firestore write batch limit
+
+            for doc_ref in docs_to_delete_refs:
+                delete_batch.delete(doc_ref)
+                ops_in_current_write_batch += 1
+                total_deleted_old_count += 1  # Increment total count here
+
+                if ops_in_current_write_batch >= MAX_OPS_PER_WRITE_BATCH:
+                    delete_batch.commit()  # Synchronous call
+                    logger.info(
+                        f"Committed a delete batch of {ops_in_current_write_batch} old reminders for user {user_id}."
+                    )
+                    delete_batch = db.batch()  # Start a new write batch
+                    ops_in_current_write_batch = 0
+
+            # Commit any remaining operations in the last write batch for this chunk
+            if ops_in_current_write_batch > 0:
+                delete_batch.commit()  # Synchronous call
+                logger.info(
+                    f"Committed final delete batch of {ops_in_current_write_batch} old reminders for user {user_id} from chunk."
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error processing a chunk of fixture IDs ({chunk_fixture_ids}) for user {user_id} while clearing old reminders: {e}",
+                exc_info=True,
+            )
+            # Decide if you want to continue with other chunks or stop.
+            # For now, we'll log and continue with the next chunk.
+            continue
+
     logger.info(
-        f"Deleted {deleted_old_count} old pending reminders for user {user_id}."
+        f"Finished clearing old reminders. Total deleted: {total_deleted_old_count} old pending reminders for user {user_id} across all chunks."
     )
 
 
