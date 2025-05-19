@@ -41,6 +41,7 @@ class ScoutRequest(BaseModel):
 
 class UserPreferenceDoc(BaseModel):
     user_id: str
+    llm_prompt: Optional[str] = None
     optimized_llm_prompt: str
     # ... other fields if any
 
