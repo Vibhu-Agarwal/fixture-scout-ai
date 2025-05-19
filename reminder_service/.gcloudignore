@@ -1,0 +1,42 @@
+# .gcloudignore - For gcloud source uploads
+
+# Python virtual environment
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# Python bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git and other VCS
+.git/
+.gitignore
+
+# Docker specific files (Cloud Build will use Dockerfile from the uploaded source)
+# Dockerfile # Usually you want to upload this so Cloud Build can use it
+# .dockerignore # Usually you want to upload this so Cloud Build can use it
+
+# Local development tools & cache
+.pytest_cache/
+.coverage/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# IDE specific
+.idea/
+.vscode/
+
+# Shell scripts not part of the app runtime if you want to exclude them from upload
+# (though cloud_run_deploy.sh itself is not part of the app image)
+# *.sh # Be careful with this if some scripts ARE needed by the build process
+
+# Markdown files and other docs not needed for the build
+*.md
