@@ -46,21 +46,11 @@ echo "----------------------------------------------------"
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run..."
 
-# Note on --allow-unauthenticated for Scout Service:
-# - /scout/orchestrate-all-user-processing: Will be called by Cloud Scheduler (needs to be invokable, ideally authenticated).
-# - /scout/process-user-fixtures: Called by the orchestrator (internal to the service if same instance, or service-to-service).
-# For initial deployment and testing the orchestrator via manual trigger, we might keep --allow-unauthenticated.
-# Then, secure the orchestrator endpoint for Cloud Scheduler (OIDC) and ensure process-user-fixtures is
-# only invokable internally or by trusted sources.
-# For now, let's keep --allow-unauthenticated for simplicity in testing the whole chain.
-# We'll address securing inter-service calls and scheduler calls more deeply in Step 10/11.
-
 gcloud run deploy "${SERVICE_NAME}" \
     --image="${IMAGE_TAG_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --allow-unauthenticated \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="GCP_REGION=${REGION}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \

@@ -36,15 +36,12 @@ echo "Deploying ${SERVICE_NAME} to Cloud Run..."
 
 # For this service, its endpoints (/notifications/handle/email, /notifications/handle/phone-mock)
 # are called by Pub/Sub push subscriptions.
-# Keeping --allow-unauthenticated for initial deployment and testing of these triggers.
-# We will secure these when setting up the Pub/Sub push subscriptions properly.
 
 gcloud run deploy "${SERVICE_NAME}" \
     --image="${IMAGE_TAG_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --allow-unauthenticated \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \

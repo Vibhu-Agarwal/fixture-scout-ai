@@ -71,7 +71,6 @@ gcloud run deploy "${SERVICE_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    # --allow-unauthenticated \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \

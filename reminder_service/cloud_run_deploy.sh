@@ -39,15 +39,12 @@ echo "Deploying ${SERVICE_NAME} to Cloud Run..."
 # For this service:
 # - /scheduler/check-and-dispatch-reminders: Called by Cloud Scheduler (needs to be invokable, ideally OIDC authenticated).
 # - /reminders/handle-status-update: Called by Pub/Sub push (needs to be invokable, ideally OIDC authenticated from Pub/Sub).
-# Keeping --allow-unauthenticated for initial deployment and testing of these triggers.
-# We will secure these when setting up Cloud Scheduler and Pub/Sub push subscriptions.
 
 gcloud run deploy "${SERVICE_NAME}" \
     --image="${IMAGE_TAG_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --allow-unauthenticated \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \
