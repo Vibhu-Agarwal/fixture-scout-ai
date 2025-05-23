@@ -110,7 +110,7 @@ async def api_optimize_prompt(request_data: PromptOptimizeRequest = Body(...)):
 
 @app.get("/")
 async def read_root():
-    return {"message": "Welcome to the Prompt Optimization Service"}
+    return {"message": "Welcome to Fixture Scout AI's Prompt Optimization Service"}
 
 
 @app.get("/health")

@@ -46,7 +46,5 @@ def get_optimizer_gemini_client() -> GenerativeModel:
                 f"Could not initialize Optimizer Vertex AI Gemini client. Error: {e}",
                 exc_info=True,
             )
-            raise RuntimeError(
-                f"Failed to initialize Optimizer Vertex AI Gemini client: {e}"
-            )  # Fail fast
+            raise
     return _optimizer_gemini_model_instance
