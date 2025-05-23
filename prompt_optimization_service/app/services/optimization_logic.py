@@ -1,14 +1,21 @@
 # prompt_optimization_service/app/services/optimization_logic.py
 import logging
-from vertexai.generative_models import GenerativeModel, GenerationConfig, HarmCategory, HarmBlockThreshold
+from vertexai.generative_models import (
+    GenerativeModel,
+    GenerationConfig,
+    HarmCategory,
+    HarmBlockThreshold,
+)
 
 from ..models import PromptOptimizeRequest
 from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class OptimizationError(Exception):
     pass
+
 
 def _construct_meta_prompt_for_optimization(raw_user_prompt: str) -> str:
     # This meta-prompt is crucial and will need tuning.
@@ -39,21 +46,25 @@ Optimized Prompt for Fixture Scout AI:
 """
     return meta_prompt
 
+
 async def optimize_user_prompt(
-    optimizer_model: GenerativeModel,
-    request_data: PromptOptimizeRequest
+    optimizer_model: GenerativeModel, request_data: PromptOptimizeRequest
 ) -> str:
     """
     Uses the optimizer LLM to refine the user's raw prompt.
     """
-    full_meta_prompt = _construct_meta_prompt_for_optimization(request_data.raw_user_prompt)
-    logger.info(f"Optimizing prompt for user_id: {request_data.user_id}. Raw prompt snippet: {request_data.raw_user_prompt[:100]}...")
+    full_meta_prompt = _construct_meta_prompt_for_optimization(
+        request_data.raw_user_prompt
+    )
+    logger.info(
+        f"Optimizing prompt for user_id: {request_data.user_id}. Raw prompt snippet: {request_data.raw_user_prompt[:100]}..."
+    )
     logger.debug(f"Full meta-prompt for optimization: {full_meta_prompt}")
 
     try:
         generation_config = GenerationConfig(
-            temperature=0.3, # Lower temperature for more deterministic and structured output
-            max_output_tokens=512, # Optimized prompt shouldn't be excessively long
+            temperature=0.3,  # Lower temperature for more deterministic and structured output
+            max_output_tokens=512,  # Optimized prompt shouldn't be excessively long
             # top_p=0.9,
             # top_k=20,
         )
@@ -68,24 +79,39 @@ async def optimize_user_prompt(
             full_meta_prompt,
             generation_config=generation_config,
             safety_settings=safety_settings,
-            stream=False
+            stream=False,
         )
 
         if hasattr(response, "text") and response.text:
             optimized_prompt_text = response.text.strip()
             # Sometimes LLMs might still add a leading "Optimized Prompt:" or similar, try to strip it.
-            if optimized_prompt_text.lower().startswith("optimized prompt for fixture scout ai:"):
-                optimized_prompt_text = optimized_prompt_text[len("optimized prompt for fixture scout ai:"):].strip()
+            if optimized_prompt_text.lower().startswith(
+                "optimized prompt for fixture scout ai:"
+            ):
+                optimized_prompt_text = optimized_prompt_text[
+                    len("optimized prompt for fixture scout ai:") :
+                ].strip()
             elif optimized_prompt_text.lower().startswith("optimized prompt:"):
-                 optimized_prompt_text = optimized_prompt_text[len("optimized prompt:"):].strip()
+                optimized_prompt_text = optimized_prompt_text[
+                    len("optimized prompt:") :
+                ].strip()
 
-            logger.info(f"Successfully optimized prompt for user_id: {request_data.user_id}. Optimized snippet: {optimized_prompt_text[:100]}...")
+            logger.info(
+                f"Successfully optimized prompt for user_id: {request_data.user_id}. Optimized snippet: {optimized_prompt_text[:100]}..."
+            )
             logger.debug(f"Full optimized prompt: {optimized_prompt_text}")
             return optimized_prompt_text
         else:
-            logger.warning(f"Optimizer LLM returned no text for user_id: {request_data.user_id}. Block reason: {response.prompt_feedback.block_reason if response.prompt_feedback else 'N/A'}")
+            logger.warning(
+                f"Optimizer LLM returned no text for user_id: {request_data.user_id}. Block reason: {response.prompt_feedback.block_reason if response.prompt_feedback else 'N/A'}"
+            )
             raise OptimizationError("LLM returned no text for prompt optimization.")
 
     except Exception as e:
-        logger.error(f"Error during prompt optimization LLM call for user_id {request_data.user_id}: {e}", exc_info=True)
-        raise OptimizationError(f"LLM interaction failed during prompt optimization: {str(e)}")
+        logger.error(
+            f"Error during prompt optimization LLM call for user_id {request_data.user_id}: {e}",
+            exc_info=True,
+        )
+        raise OptimizationError(
+            f"LLM interaction failed during prompt optimization: {str(e)}"
+        )
