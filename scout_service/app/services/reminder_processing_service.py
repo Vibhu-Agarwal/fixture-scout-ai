@@ -56,6 +56,8 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     4. Stores generated reminders in Firestore.
     Returns a summary dictionary of the operation.
     """
+    logger.info(f"Processing fixtures for user {user_id}...")
+
     db = get_firestore_client()
     gemini_model = get_vertex_ai_gemini_client()
 

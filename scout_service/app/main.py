@@ -1,8 +1,7 @@
 # scout_service/app/main.py
 import logging
 import asyncio
-from fastapi import FastAPI, HTTPException, Body, Depends
-import httpx
+from fastapi import FastAPI, HTTPException, Body
 
 from .utils.logging_config import setup_logging
 
@@ -43,59 +42,6 @@ async def lifespan(app: FastAPI):
 
 
 app.router.lifespan_context = lifespan
-
-
-async def _trigger_user_processing_task(
-    client: httpx.AsyncClient, user_id: str, base_url: str
-) -> tuple[str, bool, str]:
-    """
-    Triggers processing for a single user and returns status.
-    Returns: (user_id, success_status, message_or_error)
-    """
-    logger.info(f"Orchestrator Task: Triggering processing for user_id: {user_id}")
-    processing_url = f"{base_url}/scout/process-user-fixtures"
-    try:
-        response = await client.post(
-            processing_url, json={"user_id": user_id}, timeout=60.0
-        )  # Increased timeout for individual processing
-
-        if response.status_code == 200:
-            logger.info(
-                f"Orchestrator Task: Successfully triggered processing for user {user_id}. Response: {response.json()}"
-            )
-            return (
-                user_id,
-                True,
-                f"Successfully processed. LLM Summary: {response.json().get('message', 'OK')}",
-            )
-        else:
-            error_detail = response.text
-            logger.error(
-                f"Orchestrator Task: Failed to trigger processing for user {user_id}. Status: {response.status_code}, Response: {error_detail}"
-            )
-            return (
-                user_id,
-                False,
-                f"Failed. Status: {response.status_code}, Detail: {error_detail[:200]}",
-            )  # Truncate long errors
-    except httpx.TimeoutException:
-        logger.error(
-            f"Orchestrator Task: Timeout while triggering processing for user {user_id} at {processing_url}",
-            exc_info=True,
-        )
-        return user_id, False, "Failed due to timeout."
-    except httpx.RequestError as e:
-        logger.error(
-            f"Orchestrator Task: HTTP request error for user {user_id}: {e}",
-            exc_info=True,
-        )
-        return user_id, False, f"Failed due to HTTP request error: {str(e)}"
-    except Exception as e:
-        logger.error(
-            f"Orchestrator Task: Unexpected error for user {user_id}: {e}",
-            exc_info=True,
-        )
-        return user_id, False, f"Failed due to unexpected error: {str(e)}"
 
 
 # --- Main API Endpoints ---
@@ -164,92 +110,45 @@ async def orchestrate_all_user_processing():
             logger.info("No users found with preferences. Orchestration complete.")
             return {"message": "No users with preferences to process.", "results": []}
 
-        # Use a shared httpx.AsyncClient for connection pooling
-        # SCOUT_SERVICE_INTERNAL_URL needs to be set in your environment.
-        # e.g., in .env: SCOUT_SERVICE_INTERNAL_URL="http://localhost:8002"
-        # OR on Cloud Run: set as an environment variable for the service
-        # (often the service URL itself if it's publicly invokable, or internal DNS if available)
-        base_url = settings.SCOUT_SERVICE_INTERNAL_URL
-        if not base_url:
-            logger.error(
-                "SCOUT_SERVICE_INTERNAL_URL environment variable is not set. Cannot proceed with orchestration."
-            )
-            raise HTTPException(
-                status_code=500, detail="Orchestration service URL not configured."
-            )
+        # Create asyncio tasks to call the service logic function directly
+        tasks = [process_fixtures_for_user(user_id) for user_id in users_to_process_ids]
 
-        # Use a semaphore to limit concurrency if needed, e.g., if the downstream service has limits
-        # or to prevent overwhelming the current service if it's making many outbound calls.
-        # For now, let's allow all to run, but this is a point for future tuning.
-        # CONCURRENCY_LIMIT = 10 # Example limit
-        # semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-        # async def _throttled_trigger_user_processing_task(*args, **kwargs):
-        #     async with semaphore:
-        #         return await _trigger_user_processing_task(*args, **kwargs)
-
-        async with httpx.AsyncClient() as client:
-            tasks = [
-                _trigger_user_processing_task(client, user_id, base_url)
-                for user_id in users_to_process_ids
-            ]
-            # tasks = [
-            #    _throttled_trigger_user_processing_task(client, user_id, base_url)
-            #    for user_id in users_to_process_ids
-            # ] # If using semaphore
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        results_from_service = await asyncio.gather(*tasks, return_exceptions=True)
 
         processed_users_count = 0
         failed_users_count = 0
         detailed_results = []
 
-        for i, result in enumerate(results):
-            user_id_processed = users_to_process_ids[
-                i
-            ]  # Get user_id based on original order
-            if isinstance(result, Exception):
+        for i, result_or_exception in enumerate(results_from_service):
+            user_id_processed = users_to_process_ids[i]
+            if isinstance(result_or_exception, BaseException):
                 logger.error(
-                    f"Orchestration: Exception for user {user_id_processed}: {result}",
-                    exc_info=result,
+                    f"Orchestration: Exception processing user {user_id_processed}: {result_or_exception}",
+                    exc_info=result_or_exception,
                 )
                 failed_users_count += 1
                 detailed_results.append(
                     {
                         "user_id": user_id_processed,
                         "status": "failed",
-                        "detail": f"Exception: {str(result)}",
+                        "detail": f"Exception: {str(result_or_exception)}",
                     }
                 )
-            elif isinstance(result, tuple) and len(result) == 3:
-                _, success, message = result  # result is (user_id, success, message)
-                if success:
-                    processed_users_count += 1
-                    detailed_results.append(
-                        {
-                            "user_id": user_id_processed,
-                            "status": "success",
-                            "detail": message,
-                        }
-                    )
-                else:
-                    failed_users_count += 1
-                    detailed_results.append(
-                        {
-                            "user_id": user_id_processed,
-                            "status": "failed",
-                            "detail": message,
-                        }
-                    )
-            else:  # Should not happen if _trigger_user_processing_task is correct
-                logger.error(
-                    f"Orchestration: Unexpected result format for user {user_id_processed}: {result}"
+            else:
+                logger.info(
+                    f"Orchestration: Successfully processed user {user_id_processed}. Result: {result_or_exception}"
                 )
-                failed_users_count += 1
+                processed_users_count += 1
                 detailed_results.append(
                     {
                         "user_id": user_id_processed,
-                        "status": "failed",
-                        "detail": "Unexpected result format from task.",
+                        "status": "success",
+                        "detail": result_or_exception.get(
+                            "message", "OK"
+                        ),  # Or other relevant info from the dict
+                        "reminders_created": result_or_exception.get(
+                            "reminders_created", 0
+                        ),
                     }
                 )
 
@@ -262,8 +161,8 @@ async def orchestrate_all_user_processing():
         return {
             "message": summary_message,
             "total_processed_attempts": len(users_to_process_ids),
-            "successful_triggers": processed_users_count,
-            "failed_triggers": failed_users_count,
+            "successful_processing": processed_users_count,
+            "failed_processing": failed_users_count,
             "results": detailed_results,
         }
 
