@@ -4,7 +4,6 @@ from typing import Optional, List, Dict, Any
 import datetime
 
 
-# --- Existing User and Preference Models ---
 class UserSignupRequest(BaseModel):
     name: str = Field(..., examples=["John Doe"])
     email: EmailStr = Field(..., examples=["john.doe@example.com"])
@@ -20,18 +19,32 @@ class UserResponse(BaseModel):
 
 
 class UserPreferenceSubmitRequest(BaseModel):
-    optimized_llm_prompt: str = Field(
-        ...,
+    # User's directly entered prompt
+    raw_user_prompt: Optional[str] = Field(
+        None,  # Allow it to be None if user clears it or on initial setup
+        examples=["I like Real Madrid and big CL games, especially finals."],
+        description="User's natural language prompt for match preferences.",
+    )
+    # This is the prompt that the UI gets back from PromptOptimizationService
+    # and then sends here when the user saves their preferences.
+    # It could be the same as raw_user_prompt if optimization wasn't used or user preferred their own.
+    # Or it could be what the UI decided to send after user interaction with optimizer.
+    # Let's call it what it effectively is: the prompt to be used by the Scout service.
+    prompt_for_scout: Optional[str] = Field(
+        None,  # Allow it to be None
         examples=[
-            "Remind me of all Real Madrid matches and important Champions League games involving top teams."
+            "All Real Madrid matches. Key Champions League matches involving top-tier European clubs, especially during knockout stages..."
         ],
+        description="The prompt (raw or optimized) that will be saved for the Scout service.",
     )
 
 
 class UserPreferenceResponse(BaseModel):
     user_id: str
-    optimized_llm_prompt: str
+    raw_user_prompt: Optional[str] = None  # Now returning the raw prompt as well
+    optimized_llm_prompt: Optional[str] = None  # This is what Scout service uses
     updated_at: datetime.datetime
+    # other preferences can be added here
 
 
 # --- New Models for Listing Reminders ---
@@ -47,63 +60,53 @@ class FixtureInfo(BaseModel):
     stage: Optional[str] = None
 
 
-# Represents a single reminder item in the list returned to the user
 class UserReminderItem(BaseModel):
+    # ... (as before) ...
     reminder_id: str
-    fixture_details: FixtureInfo  # Embed fixture details
+    fixture_details: FixtureInfo
     importance_score: int
-    custom_message: str  # The message for the *next* or a primary reminder trigger
-    reminder_mode: str  # Mode of the *next* or primary reminder trigger
-    actual_reminder_time_utc: datetime.datetime  # Time of the *next* reminder trigger
-    current_status: str  # Status from the Reminders collection (e.g., "pending", "queued_for_notification", "sent")
+    custom_message: str
+    reminder_mode: str
+    actual_reminder_time_utc: datetime.datetime
+    current_status: str
     kickoff_time_utc: datetime.datetime
 
 
 class UserRemindersListResponse(BaseModel):
+    # ... (as before) ...
     user_id: str
     reminders: List[UserReminderItem]
     count: int
 
 
-# --- Pydantic models for Firestore documents (internal use) ---
-# These help in parsing data read from Firestore within services
-class ReminderDocInternal(BaseModel):  # Model for data read from 'reminders' collection
+# --- Pydantic models for Firestore documents (Remain the same) ---
+class ReminderDocInternal(BaseModel):
+    # ... (as before) ...
     reminder_id: str
     user_id: str
     fixture_id: str
-    importance_score: int  # This was likely from the overall match importance
+    importance_score: int
     kickoff_time_utc: datetime.datetime
-
-    # Fields for the specific trigger represented by this document
     reminder_offset_minutes_before_kickoff: int
     reminder_mode: str
     custom_message: str
-    actual_reminder_time_utc: (
-        datetime.datetime
-    )  # This is the key time for this specific reminder doc
-
-    status: str  # current status of this specific reminder trigger
-
-    # Optional fields that might be present from Scout Service
-    reason_for_selection: Optional[str] = None  # This is per-match, so it's fine here
+    actual_reminder_time_utc: datetime.datetime
+    status: str
+    reason_for_selection: Optional[str] = None
     llm_prompt_used_brief: Optional[str] = None
     llm_response_snippet: Optional[str] = None
-    published_to_topic: Optional[str] = None  # From reminder_service after queueing
-    last_notification_outcome: Optional[str] = (
-        None  # From reminder_service after status update
-    )
+    published_to_topic: Optional[str] = None
+    last_notification_outcome: Optional[str] = None
     last_notification_error_detail: Optional[str] = None
     last_notification_outcome_at_utc: Optional[datetime.datetime] = None
-
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
 
-class FixtureDocInternal(BaseModel):  # Model for data read from 'fixtures' collection
+class FixtureDocInternal(BaseModel):
     fixture_id: str
-    home_team: Dict[str, str]  # e.g. {"name": "Team A", "id": "team_a_id"}
+    home_team: Dict[str, str]
     away_team: Dict[str, str]
     league_name: str
     match_datetime_utc: datetime.datetime
     stage: Optional[str] = None
-    # ... any other fields
