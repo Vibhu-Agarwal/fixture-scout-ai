@@ -2,7 +2,7 @@
 import logging
 import uuid
 import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
@@ -19,6 +19,12 @@ from ..models import (
 )
 from pydantic import ValidationError
 
+from google.oauth2 import id_token  # For verifying Google ID token
+from google.auth.transport import (
+    requests as google_auth_requests,
+)  # HTTP Abstraction by google-auth
+from ..auth_utils import create_access_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +37,10 @@ class UserNotFoundError(UserServiceError):
 
 
 class PreferenceNotFoundError(UserServiceError):
+    pass
+
+
+class GoogleSignInError(UserServiceError):
     pass
 
 
@@ -245,3 +255,138 @@ async def store_user_feedback(
         f"Feedback stored successfully: {feedback_doc_data.feedback_id} for user {user_id}, reminder {reminder_id}"
     )
     return feedback_doc_data
+
+
+async def process_google_signin(
+    db: firestore.Client, token: str
+) -> tuple[str, str]:  # Returns (app_jwt, internal_user_id)
+    """
+    Verifies Google ID token, finds or creates a user, and returns an application JWT.
+    """
+    if not settings.GOOGLE_CLIENT_ID:
+        logger.error("Google Client ID not configured. Cannot verify Google ID Token.")
+        raise GoogleSignInError(
+            "Authentication service not configured (missing Google Client ID)."
+        )
+
+    try:
+        # Verify the ID token and get user info
+        # The audience should be your Google Client ID.
+        idinfo = id_token.verify_oauth2_token(
+            token,
+            google_auth_requests.Request(),  # HTTP request object for google-auth
+            settings.GOOGLE_CLIENT_ID,
+        )
+
+        # idinfo contains user data like:
+        # idinfo['iss'] == 'accounts.google.com' or 'https://accounts.google.com'
+        # idinfo['sub'] -> Google User ID (unique)
+        # idinfo['email']
+        # idinfo['email_verified']
+        # idinfo['name']
+        # idinfo['picture'] (URL)
+        # ... and more
+
+        if not idinfo.get("email_verified"):
+            logger.warning(
+                f"Google sign-in attempt with unverified email: {idinfo.get('email')}"
+            )
+            raise GoogleSignInError("Email not verified by Google.")
+
+        google_user_id = idinfo["sub"]
+        user_email = idinfo["email"]
+        user_name = idinfo.get("name", user_email.split("@")[0])  # Fallback for name
+
+        # Check if user exists by Google User ID
+        users_ref = db.collection(settings.USERS_COLLECTION)
+        query = users_ref.where("google_id", "==", google_user_id).limit(1).stream()
+
+        user_doc_snap = None
+        for doc in query:  # Should be at most one
+            user_doc_snap = doc
+            break
+
+        internal_user_id = None
+        user_created_now = False
+
+        if user_doc_snap and user_doc_snap.exists:
+            user_data = user_doc_snap.to_dict()
+            internal_user_id = user_data.get("user_id")
+            logger.info(
+                f"Google Sign-In: User found by google_id {google_user_id}. Internal user_id: {internal_user_id}"
+            )
+            # Optionally update user's name/picture from Google if they changed
+            if user_data.get("name") != user_name:  # Example update
+                user_doc_snap.reference.update(
+                    {
+                        "name": user_name,
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc),
+                    }
+                )
+        else:
+            # If not found by google_id, try by email (for users who might have signed up via email before Google Sign-In was an option)
+            # This part is optional and depends on your user migration strategy.
+            # For a new system, you might just create a new user if google_id is not found.
+            logger.info(
+                f"Google Sign-In: No user found by google_id {google_user_id}. Checking by email {user_email}..."
+            )
+            query_email = users_ref.where("email", "==", user_email).limit(1).stream()
+            email_user_doc_snap = None
+            for doc in query_email:
+                email_user_doc_snap = doc
+                break
+
+            if email_user_doc_snap and email_user_doc_snap.exists:
+                # User exists with this email, link Google ID
+                user_data = email_user_doc_snap.to_dict()
+                internal_user_id = user_data.get("user_id")
+                email_user_doc_snap.reference.update(
+                    {
+                        "google_id": google_user_id,
+                        "name": user_name,  # Update name if different
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc),
+                    }
+                )
+                logger.info(
+                    f"Google Sign-In: User found by email {user_email}, linked google_id {google_user_id}. Internal user_id: {internal_user_id}"
+                )
+            else:
+                # User does not exist, create new user
+                internal_user_id = str(uuid.uuid4())
+                created_at = datetime.datetime.now(datetime.timezone.utc)
+                new_user_record = {
+                    "user_id": internal_user_id,
+                    "google_id": google_user_id,  # Store the Google User ID
+                    "name": user_name,
+                    "email": user_email,
+                    "phone_number": None,  # No phone from Google Sign-In directly
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    "signup_method": "google",  # Optional: track signup method
+                }
+                users_ref.document(internal_user_id).set(new_user_record)
+                user_created_now = True
+                logger.info(
+                    f"Google Sign-In: New user created. Internal user_id: {internal_user_id}, Email: {user_email}"
+                )
+
+        if not internal_user_id:  # Should not happen if logic above is correct
+            raise GoogleSignInError("Failed to retrieve or create user internal ID.")
+
+        # Create application JWT
+        # The 'sub' (subject) claim is standard for user ID in JWT.
+        # Or you can use a custom claim like 'user_id'.
+        access_token_data = {"sub": internal_user_id, "email": user_email}
+        # You could add 'name': user_name if needed in token, but keep tokens small
+        app_jwt = create_access_token(data=access_token_data)
+
+        return app_jwt, internal_user_id
+
+    except ValueError as e:
+        logger.error(f"Invalid Google ID Token: {e}", exc_info=True)
+        raise GoogleSignInError(f"Invalid Google ID Token: {e}")
+    except Exception as e:
+        logger.error(f"Error during Google sign-in processing: {e}", exc_info=True)
+        raise GoogleSignInError(
+            f"An unexpected error occurred during Google sign-in: {str(e)}"
+        )

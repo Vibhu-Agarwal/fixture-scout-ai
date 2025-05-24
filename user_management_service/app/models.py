@@ -139,3 +139,20 @@ class UserFeedbackDoc(BaseModel):  # For storing in Firestore 'user_feedback' co
     timestamp: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
+
+
+class TokenData(BaseModel):
+    user_id: Optional[str] = None  # Your internal user_id
+    # Add other claims like email if needed, but keep it minimal
+
+
+class TokenResponse(BaseModel):  # Pydantic model for the token response
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str  # Include user_id in the response for the client
+
+
+class GoogleIdTokenRequest(BaseModel):
+    id_token: str = Field(
+        ..., description="The ID Token received from Google Sign-In on the client."
+    )
