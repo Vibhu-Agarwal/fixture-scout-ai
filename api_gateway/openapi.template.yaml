@@ -1,0 +1,227 @@
+swagger: "2.0"
+info:
+  title: "Fixture Scout AI API"
+  description: "API for Fixture Scout AI services, using Firebase Authentication."
+  version: "v1.1"
+host: "%%API_GATEWAY_DNS_NAME%%"
+schemes:
+  - "https"
+consumes:
+  - "application/json"
+produces:
+  - "application/json"
+
+securityDefinitions:
+  firebase_auth:
+    authorizationUrl: ""
+    flow: "implicit"
+    type: "oauth2"
+    x-google-issuer: "https://securetoken.google.com/%%GCP_PROJECT_ID%%"
+    x-google-jwks_uri: "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+    x-google-audiences: "%%GCP_PROJECT_ID%%"
+
+paths:
+  # --- User Management Service Endpoints ---
+  "/auth/firebase/ensure-profile":
+    post:
+      summary: "Ensures user profile exists after Firebase client-side sign-in."
+      operationId: "ensureFirebaseUserProfile"
+      x-google-backend:
+        address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+        path_translation: CONSTANT_ADDRESS
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/FirebaseIdTokenRequest"
+      responses:
+        "200":
+          description: "User profile ensured/retrieved successfully."
+          schema:
+            $ref: "#/definitions/UserResponse"
+        "401":
+          description: "Authentication failed."
+        "500":
+          description: "Internal server error."
+
+  "/preferences":
+    get:
+      summary: "Retrieves authenticated user's preferences."
+      operationId: "getUserPreferences"
+      security:
+        - firebase_auth: []
+      x-google-backend:
+        address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+      responses:
+        "200":
+          description: "User preferences."
+          schema:
+            $ref: "#/definitions/UserPreferenceResponse"
+        "401": { description: "Unauthorized." } # Short form for simple responses
+        "404": { description: "Preferences not found." }
+    put:
+      summary: "Sets/Updates authenticated user's preferences."
+      operationId: "setUserPreferences"
+      security:
+        - firebase_auth: []
+      x-google-backend:
+        address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/UserPreferenceSubmitRequest"
+      responses:
+        "200":
+          description: "Preferences updated."
+          schema:
+            $ref: "#/definitions/UserPreferenceResponse"
+        "401": { description: "Unauthorized." }
+
+  "/reminders":
+    get:
+      summary: "Retrieves authenticated user's upcoming reminders."
+      operationId: "getUserReminders"
+      security:
+        - firebase_auth: []
+      x-google-backend:
+        address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+      responses:
+        "200":
+          description: "List of user reminders."
+          schema:
+            $ref: "#/definitions/UserRemindersListResponse"
+        "401": { description: "Unauthorized." }
+
+  "/reminders/{reminder_id}/feedback":
+    post:
+      summary: "Submits feedback for a specific reminder."
+      operationId: "submitReminderFeedback"
+      security:
+        - firebase_auth: []
+      x-google-backend:
+        address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+      parameters:
+        - name: reminder_id
+          in: path
+          required: true
+          type: string
+          description: "ID of the reminder to submit feedback for."
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/UserFeedbackCreateRequest"
+      responses:
+        "201":
+          description: "Feedback submitted successfully."
+          schema:
+            $ref: "#/definitions/UserFeedbackDoc"
+        "400": { description: "Bad request." }
+        "401": { description: "Unauthorized." }
+        "403": { description: "Forbidden." }
+        "404": { description: "Reminder not found." }
+
+  # --- Prompt Optimization Service Endpoint ---
+  "/prompts/optimize":
+    post:
+      summary: "Optimizes a raw user prompt."
+      operationId: "optimizePrompt"
+      security:
+        - firebase_auth: []
+      x-google-backend:
+        address: "%%PROMPT_OPTIMIZATION_SERVICE_URL%%"
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/PromptOptimizeRequestForGateway"
+      responses:
+        "200":
+          description: "Successfully optimized prompt."
+          schema:
+            $ref: "#/definitions/PromptOptimizeResponse"
+        "401": { description: "Unauthorized." }
+        "500": { description: "Internal server error during optimization." }
+
+definitions:
+  FirebaseIdTokenRequest:
+    type: "object"
+    required: ["firebase_id_token"]
+    properties:
+      firebase_id_token: { type: "string" }
+  UserResponse:
+    type: "object"
+    properties:
+      user_id: { type: "string", description: "Firebase UID" }
+      name: { type: "string" }
+      email: { type: "string", format: "email" }
+      phone_number: { type: "string" } # Removed nullable here, optionality handled by not being in 'required'
+      created_at: { type: "string", format: "date-time" }
+  UserPreferenceSubmitRequest:
+    type: "object"
+    properties:
+      raw_user_prompt: { type: "string" }
+      prompt_for_scout: { type: "string" }
+  UserPreferenceResponse:
+    type: "object"
+    properties:
+      user_id: { type: "string", description: "Firebase UID" }
+      raw_user_prompt: { type: "string" }
+      optimized_llm_prompt: { type: "string" }
+      updated_at: { type: "string", format: "date-time" }
+  FixtureInfo:
+    type: "object"
+    properties:
+      fixture_id: { type: "string" }
+      home_team_name: { type: "string" }
+      away_team_name: { type: "string" }
+      league_name: { type: "string" }
+      match_datetime_utc: { type: "string", format: "date-time" }
+      stage: { type: "string" } # Removed nullable
+  UserReminderItem:
+    type: "object"
+    properties:
+      reminder_id: { type: "string" }
+      fixture_details: { "$ref": "#/definitions/FixtureInfo" }
+      importance_score: { type: "integer" }
+      custom_message: { type: "string" }
+      reminder_mode: { type: "string" }
+      actual_reminder_time_utc: { type: "string", format: "date-time" }
+      current_status: { type: "string" }
+      kickoff_time_utc: { type: "string", format: "date-time" }
+  UserRemindersListResponse:
+    type: "object"
+    properties:
+      user_id: { type: "string", description: "Firebase UID" }
+      reminders: { type: "array", items: { "$ref": "#/definitions/UserReminderItem" } }
+      count: { type: "integer" }
+  UserFeedbackCreateRequest:
+    type: "object"
+    properties:
+      feedback_reason_text: { type: "string" }
+  UserFeedbackDoc:
+    type: "object"
+    properties:
+      feedback_id: { type: "string" }
+      user_id: { type: "string", description: "Firebase UID" }
+      reminder_id: { type: "string" }
+      fixture_id: { type: "string" }
+      is_interested: { type: "boolean" }
+      feedback_reason_text: { type: "string" }
+      original_llm_prompt_snapshot: { type: "string" }
+      timestamp: { type: "string", format: "date-time" }
+  PromptOptimizeRequestForGateway:
+    type: "object"
+    required: ["raw_user_prompt"]
+    properties:
+      raw_user_prompt: { type: "string" }
+  PromptOptimizeResponse:
+    type: "object"
+    properties:
+      raw_user_prompt: { type: "string" }
+      optimized_user_prompt: { type: "string" }
+      model_used: { type: "string" }
