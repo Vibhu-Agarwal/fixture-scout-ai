@@ -1,6 +1,5 @@
 # user_management_service/app/main.py
 import logging
-import os
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -170,9 +169,7 @@ async def api_signup_user(user_data: UserSignupRequest = Body(...)):
 @app.put("/preferences", response_model=UserPreferenceResponse)
 async def api_submit_user_preferences(
     preference_data: UserPreferenceSubmitRequest = Body(...),
-    current_user: Annotated[
-        TokenData, Depends(get_current_user)
-    ] = Depends(),  # Auth dependency
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Allows an authenticated user to submit or update their LLM prompt preference.
@@ -207,9 +204,7 @@ async def api_submit_user_preferences(
 
 @app.get("/preferences", response_model=UserPreferenceResponse)
 async def api_get_user_preferences(
-    current_user: Annotated[
-        TokenData, Depends(get_current_user)
-    ] = Depends(),  # Auth dependency
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Retrieves an authenticated user's LLM prompt preference.
@@ -236,9 +231,7 @@ async def api_get_user_preferences(
 
 @app.get("/reminders", response_model=UserRemindersListResponse)
 async def api_get_user_reminders(
-    current_user: Annotated[
-        TokenData, Depends(get_current_user)
-    ] = Depends(),  # Auth dependency
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Retrieves a list of all upcoming reminders for the authenticated user.
@@ -281,9 +274,7 @@ async def api_submit_reminder_feedback(
         ..., description="The ID of the reminder this feedback is for"
     ),
     feedback_payload: UserFeedbackCreateRequest = Body(...),
-    current_user: Annotated[
-        TokenData, Depends(get_current_user)
-    ] = Depends(),  # Auth dependency
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Allows an authenticated user to submit feedback for a specific reminder.
