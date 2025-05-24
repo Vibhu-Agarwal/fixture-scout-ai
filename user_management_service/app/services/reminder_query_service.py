@@ -90,9 +90,7 @@ async def get_user_future_reminders(
     for reminder_snap in reminders_query:
         try:
             reminder_data = reminder_snap.to_dict()
-            internal_reminder = ReminderDocInternal(
-                **reminder_data
-            )  # Validate against new model
+            internal_reminder = ReminderDocInternal(**reminder_data)
 
             processed_reminders_data.append(internal_reminder)
             fixture_ids_to_fetch.add(internal_reminder.fixture_id)

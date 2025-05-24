@@ -14,6 +14,7 @@ class Settings:
     USER_PREFERENCES_COLLECTION: str = "user_preferences"
     REMINDERS_COLLECTION: str = "reminders"  # For querying reminders
     FIXTURES_COLLECTION: str = "fixtures"  # For enriching reminder data
+    USER_FEEDBACK_COLLECTION: str = "user_feedback"
 
 
 settings = Settings()

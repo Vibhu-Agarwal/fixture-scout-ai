@@ -27,6 +27,7 @@ class Settings:
     USER_PREFERENCES_COLLECTION: str = "user_preferences"
     FIXTURES_COLLECTION: str = "fixtures"
     REMINDERS_COLLECTION: str = "reminders"
+    USER_FEEDBACK_COLLECTION: str = "user_feedback"
 
 
 # Instantiate settings to be imported by other modules

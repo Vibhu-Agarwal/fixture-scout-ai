@@ -12,7 +12,12 @@ from ..models import (
     UserResponse,
     UserPreferenceSubmitRequest,
     UserPreferenceResponse,
+    UserFeedbackCreateRequest,
+    UserFeedbackDoc,
+    FixtureSnapshot,
+    ReminderDocInternal as UserMgtReminderDocInternal,  # Use a specific alias if needed
 )
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +130,118 @@ async def get_user_preferences_from_db(
     logger.info(f"Preferences retrieved for user: {user_id}")
 
     return UserPreferenceResponse(**preference_data)
+
+
+class FeedbackSubmissionError(UserServiceError):
+    pass
+
+
+async def store_user_feedback(
+    db: firestore.Client,
+    user_id: str,
+    reminder_id: str,
+    feedback_data: UserFeedbackCreateRequest,
+) -> UserFeedbackDoc:
+    logger.info(f"Storing feedback for user_id: {user_id}, reminder_id: {reminder_id}")
+
+    # 1. Fetch the original reminder to get fixture_id and original_llm_prompt_snapshot
+    reminder_doc_ref = db.collection(settings.REMINDERS_COLLECTION).document(
+        reminder_id
+    )
+    reminder_snap = reminder_doc_ref.get()
+    if not reminder_snap.exists:
+        logger.error(
+            f"Reminder {reminder_id} not found when trying to store feedback for user {user_id}."
+        )
+        raise FeedbackSubmissionError(f"Original reminder {reminder_id} not found.")
+
+    try:
+        # Use ReminderDocInternal from this service's models if it matches structure,
+        # or define a minimal one just for fetching these fields.
+        # Assuming ReminderDocInternal from models.py has the necessary fields.
+        reminder_details = UserMgtReminderDocInternal(**reminder_snap.to_dict())
+        if reminder_details.user_id != user_id:  # Security check
+            logger.error(
+                f"User {user_id} attempting to submit feedback for reminder {reminder_id} belonging to another user."
+            )
+            raise FeedbackSubmissionError("Feedback submission forbidden.")
+    except ValidationError as e:
+        logger.error(
+            f"Invalid reminder data for {reminder_id} when fetching for feedback: {e}"
+        )
+        raise FeedbackSubmissionError(f"Could not process original reminder data: {e}")
+
+    # 2. Fetch fixture details for the snapshot
+    fixture_doc_ref = db.collection(settings.FIXTURES_COLLECTION).document(
+        reminder_details.fixture_id
+    )
+    fixture_snap = fixture_doc_ref.get()
+    if not fixture_snap.exists:
+        logger.error(
+            f"Fixture {reminder_details.fixture_id} not found for reminder {reminder_id} during feedback submission."
+        )
+        # Still proceed with feedback, but snapshot will be minimal or indicate missing
+        fixture_snapshot = FixtureSnapshot(
+            fixture_id=reminder_details.fixture_id,
+            home_team_name="N/A (Original Fixture Not Found)",
+            away_team_name="N/A",
+            league_name="N/A",
+            match_datetime_utc_iso=datetime.datetime.min.replace(
+                tzinfo=datetime.timezone.utc
+            ).isoformat(),  # Placeholder
+            stage="N/A",
+        )
+    else:
+        try:
+            fixture_data = fixture_snap.to_dict()
+            # Assuming FixtureDocInternal has the right structure from models.py
+            from ..models import (
+                FixtureDocInternal as UserMgtFixtureDocInternal,
+            )  # Alias if needed
+
+            fixture_internal = UserMgtFixtureDocInternal(**fixture_data)
+            fixture_snapshot = FixtureSnapshot(
+                fixture_id=fixture_internal.fixture_id,
+                home_team_name=fixture_internal.home_team.get("name", "N/A"),
+                away_team_name=fixture_internal.away_team.get("name", "N/A"),
+                league_name=fixture_internal.league_name,
+                match_datetime_utc_iso=fixture_internal.match_datetime_utc.isoformat(),
+                stage=fixture_internal.stage,
+            )
+        except ValidationError as e:
+            logger.error(
+                f"Invalid fixture data {reminder_details.fixture_id} for feedback: {e}"
+            )
+            # Fallback snapshot
+            fixture_snapshot = FixtureSnapshot(
+                fixture_id=reminder_details.fixture_id,
+                home_team_name="N/A (Fixture Data Invalid)",
+                away_team_name="N/A",
+                league_name="N/A",
+                match_datetime_utc_iso=datetime.datetime.min.replace(
+                    tzinfo=datetime.timezone.utc
+                ).isoformat(),
+                stage="N/A",
+            )
+
+    # 3. Create and store the feedback document
+    feedback_doc_data = UserFeedbackDoc(
+        user_id=user_id,
+        reminder_id=reminder_id,
+        fixture_id=reminder_details.fixture_id,
+        feedback_reason_text=feedback_data.feedback_reason_text,
+        fixture_details_snapshot=fixture_snapshot,
+        original_llm_prompt_snapshot=getattr(
+            reminder_details, "optimized_llm_prompt_snapshot", None
+        ),
+    )
+
+    feedback_doc_ref = db.collection(settings.USER_FEEDBACK_COLLECTION).document(
+        feedback_doc_data.feedback_id
+    )
+    feedback_doc_ref.set(feedback_doc_data.model_dump())
+
+    logger.info(
+        f"Feedback stored successfully: {feedback_doc_data.feedback_id} for user {user_id}, reminder {reminder_id}"
+    )
+    return feedback_doc_data

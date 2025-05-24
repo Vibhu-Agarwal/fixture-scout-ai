@@ -1,16 +1,67 @@
 # scout_service/app/llm_prompts.py
 import json
 from typing import List
-from .models import FixtureForLLM
+from .models import FixtureForLLM, ScoutUserFeedbackDoc, FixtureSnapshotForScout
+
+
+def _format_fixture_snapshot_for_prompt(
+    snapshot: FixtureSnapshotForScout | None,
+) -> str:
+    if not snapshot:
+        return "Details unavailable."
+    # Access attributes directly from Pydantic model
+    return (
+        f"Match: {snapshot.home_team_name} vs {snapshot.away_team_name}, "
+        f"League: {snapshot.league_name}, Stage: {snapshot.stage or 'N/A'}, "
+        f"Date: {snapshot.match_datetime_utc_iso}"
+    )
+
+
+def format_feedback(
+    negative_feedback_examples: List[ScoutUserFeedbackDoc],
+) -> str:
+    feedback_section = ""
+    if negative_feedback_examples:
+        feedback_section += (
+            "\n\nIMPORTANT USER FEEDBACK (Examples of what NOT to suggest):\n"
+        )
+        feedback_section += "The user has previously indicated they were NOT interested in matches similar to the following. Please learn from these examples to refine your selections according to their preferences:\n"
+        for i, fb_item in enumerate(negative_feedback_examples):
+            # Ensure fixture_details_snapshot is not None before trying to dump it
+            if fb_item.fixture_details_snapshot:
+                fixture_details_str = _format_fixture_snapshot_for_prompt(
+                    fb_item.fixture_details_snapshot
+                )
+            else:
+                fixture_details_str = (
+                    "Fixture details for this feedback item are missing."
+                )
+
+            reason = (
+                fb_item.feedback_reason_text or "No specific reason provided by user."
+            )
+            # original_prompt_snippet = (fb_item.original_llm_prompt_snapshot[:150] + "...") if fb_item.original_llm_prompt_snapshot else "N/A"
+
+            feedback_section += (
+                f"\n--- Example of a previous unwanted suggestion {i+1} ---\n"
+                f"Context of unwanted match: {fixture_details_str}\n"
+                f'User\'s reason for disinterest: "{reason}"\n'
+                # f"User's general preference prompt at that time was: \"{original_prompt_snippet}\"\n" # This line might make the prompt too verbose and LLM might focus on old prompt instead of current one. Test its utility. For now, let's simplify.
+            )
+        feedback_section += "--- End of User Feedback Examples ---\n"
+    return feedback_section
 
 
 def construct_gemini_scout_prompt(
-    user_optimized_prompt: str, fixtures: List[FixtureForLLM]
+    user_optimized_prompt: str,
+    fixtures: List[FixtureForLLM],
+    negative_feedback_examples: List[ScoutUserFeedbackDoc],
 ) -> str:
     """
     Constructs the detailed prompt for Gemini to select fixtures and generate reminder details.
     """
     fixtures_json_str = json.dumps([f.model_dump() for f in fixtures], indent=2)
+    feedback_section = format_feedback(negative_feedback_examples)
 
     prompt = f"""
 You are Fixture Scout AI. Your task is to select relevant football matches for a user based on their preferences and a list of upcoming fixtures.
@@ -18,6 +69,8 @@ For each match you select, you must provide a brief reason for the selection, as
 
 User's Match Selection Criteria:
 "{user_optimized_prompt}"
+
+{feedback_section}
 
 Available Upcoming Fixtures:
 {fixtures_json_str}

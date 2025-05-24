@@ -71,5 +71,42 @@ class ReminderDoc(BaseModel):  # What we store in the Reminders collection
     status: str = "pending"
     llm_prompt_used_brief: str
     llm_response_snippet: str
+    optimized_llm_prompt_snapshot: Optional[str] = None
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+# Make sure FixtureDoc is defined here if reminder_processing_service.py uses it for original_fixtures_map.
+# It should be:
+# class FixtureDoc(BaseModel):
+#     fixture_id: str
+#     home_team: Dict[str, str]
+#     away_team: Dict[str, str]
+#     league_name: str
+#     match_datetime_utc: datetime.datetime
+#     stage: Optional[str] = None
+#     raw_metadata_blob: Optional[Dict[str, Any]] = None
+
+
+# --- NEW Models for Feedback Loop ---
+class FixtureSnapshotForScout(BaseModel):  # Mirrored from user_management_service
+    fixture_id: str
+    home_team_name: str
+    away_team_name: str
+    league_name: str
+    match_datetime_utc_iso: str  # Stored as ISO string by User Mgt Service
+    stage: Optional[str] = None
+
+
+class ScoutUserFeedbackDoc(BaseModel):  # For reading from 'user_feedback' collection
+    feedback_id: str
+    user_id: str
+    # reminder_id: str # Not strictly needed by scout for prompt, but part of doc
+    # fixture_id: str  # Included in fixture_details_snapshot
+    # is_interested: bool # We only fetch is_interested == False
+    feedback_reason_text: Optional[str] = None
+    fixture_details_snapshot: FixtureSnapshotForScout  # This is the critical context
+    original_llm_prompt_snapshot: Optional[str] = (
+        None  # The prompt that led to this "bad" reminder
+    )
+    timestamp: datetime.datetime

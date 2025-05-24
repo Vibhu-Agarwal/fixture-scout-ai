@@ -1,4 +1,5 @@
 # user_management_service/app/models.py
+import uuid
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict, Any
 import datetime
@@ -61,7 +62,6 @@ class FixtureInfo(BaseModel):
 
 
 class UserReminderItem(BaseModel):
-    # ... (as before) ...
     reminder_id: str
     fixture_details: FixtureInfo
     importance_score: int
@@ -73,7 +73,6 @@ class UserReminderItem(BaseModel):
 
 
 class UserRemindersListResponse(BaseModel):
-    # ... (as before) ...
     user_id: str
     reminders: List[UserReminderItem]
     count: int
@@ -81,7 +80,6 @@ class UserRemindersListResponse(BaseModel):
 
 # --- Pydantic models for Firestore documents (Remain the same) ---
 class ReminderDocInternal(BaseModel):
-    # ... (as before) ...
     reminder_id: str
     user_id: str
     fixture_id: str
@@ -99,6 +97,7 @@ class ReminderDocInternal(BaseModel):
     last_notification_outcome: Optional[str] = None
     last_notification_error_detail: Optional[str] = None
     last_notification_outcome_at_utc: Optional[datetime.datetime] = None
+    optimized_llm_prompt_snapshot: Optional[str] = None
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -110,3 +109,33 @@ class FixtureDocInternal(BaseModel):
     league_name: str
     match_datetime_utc: datetime.datetime
     stage: Optional[str] = None
+
+
+class FixtureSnapshot(BaseModel):  # For fixture_details_at_feedback_time
+    fixture_id: str
+    home_team_name: str
+    away_team_name: str
+    league_name: str
+    match_datetime_utc_iso: str  # Store as ISO string
+    stage: Optional[str] = None
+
+
+class UserFeedbackCreateRequest(BaseModel):
+    # is_interested will always be false for this flow
+    feedback_reason_text: Optional[str] = Field(None, max_length=500)
+
+
+class UserFeedbackDoc(BaseModel):  # For storing in Firestore 'user_feedback' collection
+    feedback_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    reminder_id: str  # The reminder this feedback pertains to
+    fixture_id: str
+    is_interested: bool = False  # Hardcoded for "not interested"
+    feedback_reason_text: Optional[str] = None
+    fixture_details_snapshot: FixtureSnapshot  # Snapshot of fixture details
+    original_llm_prompt_snapshot: Optional[str] = (
+        None  # Snapshot of prompt used by scout
+    )
+    timestamp: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
