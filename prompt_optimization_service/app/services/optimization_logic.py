@@ -48,7 +48,7 @@ Optimized Prompt for Fixture Scout AI:
 
 
 async def optimize_user_prompt(
-    optimizer_model: GenerativeModel, request_data: PromptOptimizeRequest
+    optimizer_model: GenerativeModel, user_id: str, request_data: PromptOptimizeRequest
 ) -> str:
     """
     Uses the optimizer LLM to refine the user's raw prompt.
@@ -57,7 +57,7 @@ async def optimize_user_prompt(
         request_data.raw_user_prompt
     )
     logger.info(
-        f"Optimizing prompt for user_id: {request_data.user_id}. Raw prompt snippet: {request_data.raw_user_prompt[:100]}..."
+        f"Optimizing prompt for user_id: {user_id}. Raw prompt snippet: {request_data.raw_user_prompt[:100]}..."
     )
     logger.debug(f"Full meta-prompt for optimization: {full_meta_prompt}")
 
@@ -97,19 +97,19 @@ async def optimize_user_prompt(
                 ].strip()
 
             logger.info(
-                f"Successfully optimized prompt for user_id: {request_data.user_id}. Optimized snippet: {optimized_prompt_text[:100]}..."
+                f"Successfully optimized prompt for user_id: {user_id}. Optimized snippet: {optimized_prompt_text[:100]}..."
             )
             logger.debug(f"Full optimized prompt: {optimized_prompt_text}")
             return optimized_prompt_text
         else:
             logger.warning(
-                f"Optimizer LLM returned no text for user_id: {request_data.user_id}. Block reason: {response.prompt_feedback.block_reason if response.prompt_feedback else 'N/A'}"
+                f"Optimizer LLM returned no text for user_id: {user_id}. Block reason: {response.prompt_feedback.block_reason if response.prompt_feedback else 'N/A'}"
             )
             raise OptimizationError("LLM returned no text for prompt optimization.")
 
     except Exception as e:
         logger.error(
-            f"Error during prompt optimization LLM call for user_id {request_data.user_id}: {e}",
+            f"Error during prompt optimization LLM call for user_id {user_id}: {e}",
             exc_info=True,
         )
         raise OptimizationError(

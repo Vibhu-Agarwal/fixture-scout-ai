@@ -22,69 +22,62 @@ setup_logging()
 from .config import settings
 from .firestore_client import get_firestore_client
 from .models import (
-    UserSignupRequest,
+    FirebaseIdTokenRequest,
     UserResponse,
     UserPreferenceSubmitRequest,
     UserPreferenceResponse,
     UserRemindersListResponse,
     UserReminderItem,
     TokenData,
-    TokenResponse,
-    GoogleIdTokenRequest,
     UserFeedbackCreateRequest,
     UserFeedbackDoc,
 )
 from .services.user_service import (
+    get_or_create_user_profile_from_firebase_token,
     store_user_feedback,
-    create_user,
     set_user_preferences,
     get_user_preferences_from_db,
-    process_google_signin,
-    UserServiceError,
     UserNotFoundError,
     PreferenceNotFoundError,
     FeedbackSubmissionError,
-    GoogleSignInError,
 )
 from .services.reminder_query_service import (
     get_user_future_reminders,
     ReminderQueryError,
 )
-from .auth_utils import (
-    decode_access_token,
-)
+from firebase_admin_init import initialize_firebase_admin
+from firebase_admin import auth as firebase_auth, exceptions as firebase_exceptions
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 logger = logging.getLogger(__name__)
 
-# --- JWT Authentication Setup ---
-# oauth2_scheme defines how to get the token (from Authorization header as Bearer token)
-# tokenUrl is not strictly needed here if we don't have a traditional username/password login endpoint
-# that issues tokens directly. Our /auth/google/signin will issue tokens.
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")  # Placeholder tokenUrl
 
-
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> TokenData:
-    """
-    Dependency to validate JWT and extract user information.
-    This will be used by protected endpoints.
-    """
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> TokenData:
     credentials_exception = HTTPException(
         status_code=http_status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Could not validate Firebase credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    token_data = decode_access_token(token)  # From your auth_utils.py
-    if token_data is None or token_data.user_id is None:
-        logger.warning(f"Invalid or expired token received.")
+    try:
+        decoded_token = firebase_auth.verify_id_token(token)
+        firebase_uid = decoded_token.get("uid")
+        if not firebase_uid:
+            raise credentials_exception
+        logger.debug(f"Firebase ID Token validated for Firebase UID: {firebase_uid}")
+        return TokenData(
+            user_id=firebase_uid
+        )  # Storing Firebase UID in user_id field of TokenData
+    except firebase_exceptions.FirebaseError as e:
+        logger.warning(f"Firebase ID Token verification failed: {e}")
         raise credentials_exception
-
-    # You could fetch user from DB here to ensure they exist and are active,
-    # but for now, just relying on valid token with user_id claim.
-    # user = get_user_from_db(db, user_id=token_data.user_id)
-    # if user is None:
-    #     raise credentials_exception
-    logger.debug(f"Token validated for user_id: {token_data.user_id}")
-    return token_data  # Contains user_id (and potentially other claims)
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during Firebase token verification: {e}", exc_info=True
+        )
+        raise credentials_exception
 
 
 # --- Lifespan Event Handler ---
@@ -93,6 +86,7 @@ async def lifespan(app: FastAPI):
     logger.info("User Management & Preference Service starting up...")
     try:
         get_firestore_client()  # Initialize Firestore client
+        initialize_firebase_admin()  # Ensure Firebase Admin SDK is initialized
         logger.info("UserMgt Firestore client initialized successfully on startup.")
     except Exception as e:
         logger.critical(
@@ -106,63 +100,38 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="User Management & Preference Service",
     description="Manages user signups, preferences, authentication, and lists their reminders.",
-    version="0.3.0",  # Incremented version for auth changes
+    version="0.4.0",
     lifespan=lifespan,
 )
 
 
-@app.post("/auth/google/signin", response_model=TokenResponse)
-async def api_google_signin(request_data: GoogleIdTokenRequest = Body(...)):
+# This endpoint now primarily ensures user profile exists in your DB after Firebase client-side login.
+# It could return the UserResponse from your DB.
+@app.post("/auth/firebase/ensure-profile", response_model=UserResponse)
+async def api_ensure_firebase_user_profile(
+    request_data: FirebaseIdTokenRequest = Body(...),
+):
     """
-    Handles Google Sign-In.
-    Verifies Google ID Token, finds/creates user, returns application JWT.
+    Receives Firebase ID Token from client (after client-side Firebase Google Sign-In).
+    Verifies token, ensures user profile exists in local DB, returns local user profile.
+    No application-specific JWT is issued here; client uses Firebase ID Token for API calls.
     """
     try:
         db = get_firestore_client()
-        app_jwt, internal_user_id = await process_google_signin(
-            db, request_data.id_token
+        user_profile = await get_or_create_user_profile_from_firebase_token(
+            db, request_data.firebase_id_token
         )
-        return TokenResponse(access_token=app_jwt, user_id=internal_user_id)
-    except GoogleSignInError as e:
-        logger.error(f"Google Sign-In failed: {e}", exc_info=True)
+        return user_profile
+    except firebase_exceptions.FirebaseError as e:
+        logger.error(f"Firebase ensure profile failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_401_UNAUTHORIZED, detail=str(e)
         )
     except Exception as e:
-        logger.error(f"Unexpected error during Google Sign-In: {e}", exc_info=True)
+        logger.error(f"Unexpected error during ensure profile: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred during sign-in.",
-        )
-
-
-# --- User Signup Endpoint (Potentially Deprecated or Modified if Google Sign-In is primary) ---
-# For now, let's keep it but note that Google Sign-In will also create users.
-# This endpoint might be used for other signup methods in the future or admin creation.
-@app.post(
-    "/signup",
-    response_model=UserResponse,
-    status_code=201,
-    deprecated=True,
-    summary="Legacy signup, prefer Google Sign-In",
-)
-async def api_signup_user(user_data: UserSignupRequest = Body(...)):
-    # ... (existing signup logic, but consider how it interacts with Google Sign-In users) ...
-    # If you want to prevent duplicate emails across signup methods, add checks.
-    try:
-        db = get_firestore_client()
-        created_user = await create_user(
-            db, user_data
-        )  # This function needs to ensure it also stores user_id
-        return created_user
-    except UserServiceError as e:
-        logger.warning(f"Signup failed: {e}")
-        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error during signup: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred during signup.",
+            detail="Internal error.",
         )
 
 
@@ -178,7 +147,7 @@ async def api_submit_user_preferences(
         db = get_firestore_client()
         # Use current_user.user_id from the validated token
         updated_preference = await set_user_preferences(
-            db, current_user.user_id, preference_data  # type: ignore
+            db, current_user.user_id, preference_data
         )
         return updated_preference
     # UserNotFoundError might not be directly applicable if user_id is from token,
@@ -211,7 +180,7 @@ async def api_get_user_preferences(
     """
     try:
         db = get_firestore_client()
-        preferences = await get_user_preferences_from_db(db, current_user.user_id)  # type: ignore
+        preferences = await get_user_preferences_from_db(db, current_user.user_id)
         return preferences
     except PreferenceNotFoundError as e:
         logger.warning(
@@ -239,10 +208,10 @@ async def api_get_user_reminders(
     try:
         db = get_firestore_client()
         reminders_list: List[UserReminderItem] = await get_user_future_reminders(
-            db, current_user.user_id  # type: ignore
+            db, current_user.user_id
         )
         return UserRemindersListResponse(
-            user_id=current_user.user_id,  # Use user_id from token # type: ignore
+            user_id=current_user.user_id,
             reminders=reminders_list,
             count=len(reminders_list),
         )
@@ -284,7 +253,7 @@ async def api_submit_reminder_feedback(
         # The store_user_feedback function should internally verify that current_user.user_id
         # is associated with the reminder_id or the user it belongs to.
         feedback_doc = await store_user_feedback(
-            db, current_user.user_id, reminder_id, feedback_payload  # type: ignore
+            db, current_user.user_id, reminder_id, feedback_payload
         )
         return feedback_doc
     except FeedbackSubmissionError as e:

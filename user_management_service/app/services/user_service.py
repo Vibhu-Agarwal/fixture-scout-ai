@@ -1,14 +1,11 @@
 # user_management_service/app/services/user_service.py
 import logging
-import uuid
 import datetime
-from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
 from ..config import settings
 from ..models import (
-    UserSignupRequest,
     UserResponse,
     UserPreferenceSubmitRequest,
     UserPreferenceResponse,
@@ -19,11 +16,11 @@ from ..models import (
 )
 from pydantic import ValidationError
 
-from google.oauth2 import id_token  # For verifying Google ID token
-from google.auth.transport import (
-    requests as google_auth_requests,
-)  # HTTP Abstraction by google-auth
-from ..auth_utils import create_access_token
+from firebase_admin import auth as firebase_auth
+from firebase_admin.exceptions import (
+    FirebaseError,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,34 +41,8 @@ class GoogleSignInError(UserServiceError):
     pass
 
 
-async def create_user(
-    db: firestore.Client, user_data: UserSignupRequest
-) -> UserResponse:
-    user_id = str(uuid.uuid4())
-    created_at = datetime.datetime.now(datetime.timezone.utc)
-    user_doc_ref = db.collection(settings.USERS_COLLECTION).document(user_id)
-
-    # Basic check for existing email (can be enhanced)
-    existing_users = (
-        db.collection(settings.USERS_COLLECTION)
-        .where("email", "==", user_data.email)
-        .limit(1)
-        .stream()
-    )
-    if any(existing_users):
-        logger.warning(f"Attempt to create user with existing email: {user_data.email}")
-        raise UserServiceError(f"User with email {user_data.email} already exists.")
-
-    user_record = {
-        "user_id": user_id,
-        "name": user_data.name,
-        "email": str(user_data.email),
-        "phone_number": user_data.phone_number,
-        "created_at": created_at,
-    }
-    user_doc_ref.set(user_record)
-    logger.info(f"User created successfully: {user_id}, Email: {user_data.email}")
-    return UserResponse(**user_record)
+class FirebaseAuthError(UserServiceError):
+    pass
 
 
 async def set_user_preferences(
@@ -257,136 +228,83 @@ async def store_user_feedback(
     return feedback_doc_data
 
 
-async def process_google_signin(
-    db: firestore.Client, token: str
-) -> tuple[str, str]:  # Returns (app_jwt, internal_user_id)
+async def get_or_create_user_profile_from_firebase_token(
+    db: firestore.Client, firebase_id_token: str
+) -> UserResponse:
     """
-    Verifies Google ID token, finds or creates a user, and returns an application JWT.
+    Verifies a Firebase ID token, then finds or creates a user profile
+    in Firestore using the Firebase UID as the primary key.
+    Returns the UserResponse.
     """
-    if not settings.GOOGLE_CLIENT_ID:
-        logger.error("Google Client ID not configured. Cannot verify Google ID Token.")
-        raise GoogleSignInError(
-            "Authentication service not configured (missing Google Client ID)."
-        )
-
     try:
-        # Verify the ID token and get user info
-        # The audience should be your Google Client ID.
-        idinfo = id_token.verify_oauth2_token(
-            token,
-            google_auth_requests.Request(),  # HTTP request object for google-auth
-            settings.GOOGLE_CLIENT_ID,
+        decoded_token = firebase_auth.verify_id_token(firebase_id_token)
+        firebase_uid = decoded_token["uid"]  # This IS our user_id now
+        user_email = decoded_token.get("email")
+        user_name = decoded_token.get(
+            "name",
+            user_email.split("@")[0] if user_email else f"User_{firebase_uid[:6]}",
+        )
+        # picture = decoded_token.get('picture')
+
+        logger.info(
+            f"Firebase ID Token verified. User ID (Firebase UID): {firebase_uid}, Email: {user_email}"
         )
 
-        # idinfo contains user data like:
-        # idinfo['iss'] == 'accounts.google.com' or 'https://accounts.google.com'
-        # idinfo['sub'] -> Google User ID (unique)
-        # idinfo['email']
-        # idinfo['email_verified']
-        # idinfo['name']
-        # idinfo['picture'] (URL)
-        # ... and more
+        user_doc_ref = db.collection(settings.USERS_COLLECTION).document(
+            firebase_uid
+        )  # Use Firebase UID as document ID
+        user_doc_snap = user_doc_ref.get()
 
-        if not idinfo.get("email_verified"):
-            logger.warning(
-                f"Google sign-in attempt with unverified email: {idinfo.get('email')}"
-            )
-            raise GoogleSignInError("Email not verified by Google.")
-
-        google_user_id = idinfo["sub"]
-        user_email = idinfo["email"]
-        user_name = idinfo.get("name", user_email.split("@")[0])  # Fallback for name
-
-        # Check if user exists by Google User ID
-        users_ref = db.collection(settings.USERS_COLLECTION)
-        query = users_ref.where("google_id", "==", google_user_id).limit(1).stream()
-
-        user_doc_snap = None
-        for doc in query:  # Should be at most one
-            user_doc_snap = doc
-            break
-
-        internal_user_id = None
-        user_created_now = False
-
-        if user_doc_snap and user_doc_snap.exists:
+        if user_doc_snap.exists:
             user_data = user_doc_snap.to_dict()
-            internal_user_id = user_data.get("user_id")
-            logger.info(
-                f"Google Sign-In: User found by google_id {google_user_id}. Internal user_id: {internal_user_id}"
+            logger.info(f"User profile found in Firestore for User ID: {firebase_uid}")
+
+            # Optionally update name/email if they changed in Firebase and you want to sync
+            updates = {}
+            if user_data.get("name") != user_name:
+                updates["name"] = user_name
+            if user_data.get("email") != user_email:
+                updates["email"] = user_email
+            if updates:
+                updates["updated_at"] = datetime.datetime.now(datetime.timezone.utc)
+                user_doc_ref.update(updates)
+                # Re-fetch or merge for UserResponse if needed, or assume Pydantic model handles it
+                user_data.update(updates)
+
+            # Ensure all fields for UserResponse are present
+            return UserResponse(
+                user_id=user_data.get("user_id", firebase_uid),
+                name=user_data.get("name", user_name),
+                email=user_data.get("email", user_email),
+                phone_number=user_data.get("phone_number"),
+                created_at=user_data.get("created_at"),
             )
-            # Optionally update user's name/picture from Google if they changed
-            if user_data.get("name") != user_name:  # Example update
-                user_doc_snap.reference.update(
-                    {
-                        "name": user_name,
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc),
-                    }
-                )
         else:
-            # If not found by google_id, try by email (for users who might have signed up via email before Google Sign-In was an option)
-            # This part is optional and depends on your user migration strategy.
-            # For a new system, you might just create a new user if google_id is not found.
+            # User exists in Firebase Auth, but not in our Firestore Users collection yet. Create it.
+            created_at = datetime.datetime.now(datetime.timezone.utc)
+
+            new_user_record = {
+                "user_id": firebase_uid,  # Firebase UID is the user_id
+                "name": user_name,
+                "email": user_email,
+                "phone_number": None,
+                "created_at": created_at,
+                "updated_at": created_at,
+                "signup_method": "firebase_google",
+            }
+            user_doc_ref.set(new_user_record)
             logger.info(
-                f"Google Sign-In: No user found by google_id {google_user_id}. Checking by email {user_email}..."
+                f"New user profile created in Firestore. User ID (Firebase UID): {firebase_uid}"
             )
-            query_email = users_ref.where("email", "==", user_email).limit(1).stream()
-            email_user_doc_snap = None
-            for doc in query_email:
-                email_user_doc_snap = doc
-                break
 
-            if email_user_doc_snap and email_user_doc_snap.exists:
-                # User exists with this email, link Google ID
-                user_data = email_user_doc_snap.to_dict()
-                internal_user_id = user_data.get("user_id")
-                email_user_doc_snap.reference.update(
-                    {
-                        "google_id": google_user_id,
-                        "name": user_name,  # Update name if different
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc),
-                    }
-                )
-                logger.info(
-                    f"Google Sign-In: User found by email {user_email}, linked google_id {google_user_id}. Internal user_id: {internal_user_id}"
-                )
-            else:
-                # User does not exist, create new user
-                internal_user_id = str(uuid.uuid4())
-                created_at = datetime.datetime.now(datetime.timezone.utc)
-                new_user_record = {
-                    "user_id": internal_user_id,
-                    "google_id": google_user_id,  # Store the Google User ID
-                    "name": user_name,
-                    "email": user_email,
-                    "phone_number": None,  # No phone from Google Sign-In directly
-                    "created_at": created_at,
-                    "updated_at": created_at,
-                    "signup_method": "google",  # Optional: track signup method
-                }
-                users_ref.document(internal_user_id).set(new_user_record)
-                user_created_now = True
-                logger.info(
-                    f"Google Sign-In: New user created. Internal user_id: {internal_user_id}, Email: {user_email}"
-                )
+            return UserResponse(**new_user_record)  # Pydantic will validate
 
-        if not internal_user_id:  # Should not happen if logic above is correct
-            raise GoogleSignInError("Failed to retrieve or create user internal ID.")
-
-        # Create application JWT
-        # The 'sub' (subject) claim is standard for user ID in JWT.
-        # Or you can use a custom claim like 'user_id'.
-        access_token_data = {"sub": internal_user_id, "email": user_email}
-        # You could add 'name': user_name if needed in token, but keep tokens small
-        app_jwt = create_access_token(data=access_token_data)
-
-        return app_jwt, internal_user_id
-
-    except ValueError as e:
-        logger.error(f"Invalid Google ID Token: {e}", exc_info=True)
-        raise GoogleSignInError(f"Invalid Google ID Token: {e}")
+    except FirebaseError as e:
+        logger.error(f"Firebase authentication error: {e}", exc_info=True)
+        raise FirebaseAuthError(f"Firebase authentication failed: {str(e)}")
     except Exception as e:
-        logger.error(f"Error during Google sign-in processing: {e}", exc_info=True)
-        raise GoogleSignInError(
-            f"An unexpected error occurred during Google sign-in: {str(e)}"
+        logger.error(
+            f"Error processing Firebase token or creating user profile: {e}",
+            exc_info=True,
         )
+        raise FirebaseAuthError(f"An unexpected error occurred: {str(e)}")

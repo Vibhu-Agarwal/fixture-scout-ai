@@ -5,12 +5,6 @@ from typing import Optional, List, Dict, Any
 import datetime
 
 
-class UserSignupRequest(BaseModel):
-    name: str = Field(..., examples=["John Doe"])
-    email: EmailStr = Field(..., examples=["john.doe@example.com"])
-    phone_number: Optional[str] = Field(None, examples=["+15551234567"])
-
-
 class UserResponse(BaseModel):
     user_id: str
     name: str
@@ -142,17 +136,8 @@ class UserFeedbackDoc(BaseModel):  # For storing in Firestore 'user_feedback' co
 
 
 class TokenData(BaseModel):
-    user_id: Optional[str] = None  # Your internal user_id
-    # Add other claims like email if needed, but keep it minimal
+    user_id: str
 
 
-class TokenResponse(BaseModel):  # Pydantic model for the token response
-    access_token: str
-    token_type: str = "bearer"
-    user_id: str  # Include user_id in the response for the client
-
-
-class GoogleIdTokenRequest(BaseModel):
-    id_token: str = Field(
-        ..., description="The ID Token received from Google Sign-In on the client."
-    )
+class FirebaseIdTokenRequest(BaseModel):  # New request model
+    firebase_id_token: str

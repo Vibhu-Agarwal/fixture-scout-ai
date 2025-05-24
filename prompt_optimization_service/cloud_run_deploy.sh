@@ -3,7 +3,7 @@ set -e # Exit immediately if a command exits with a non-zero status.
 
 # --- Configuration ---
 # Version of the service. Match this with your application's version if you have one.
-export SERVICE_VERSION="0.1.0" # From your prompt_optimization_service/app/main.py
+export SERVICE_VERSION="0.2.0" # From your prompt_optimization_service/app/main.py
 
 # Name of the Cloud Run service
 export SERVICE_NAME="prompt-optimization-service"

@@ -1,7 +1,9 @@
 # prompt_optimization_service/app/main.py
 import logging
 import os
-from fastapi import FastAPI, HTTPException, Body
+from typing import Annotated
+from fastapi import Depends, FastAPI, HTTPException, Body, status as http_status
+from fastapi.security import OAuth2PasswordBearer
 from contextlib import asynccontextmanager
 
 from .utils.logging_config import setup_logging
@@ -10,12 +12,43 @@ setup_logging()
 
 from .config import settings
 from .vertex_ai_client import get_optimizer_gemini_client  # Import the specific client
-from .models import PromptOptimizeRequest, PromptOptimizeResponse
+from .models import PromptOptimizeRequest, PromptOptimizeResponse, TokenData
 from .services.optimization_logic import optimize_user_prompt, OptimizationError
+from firebase_admin import auth as firebase_auth, exceptions as firebase_exceptions
 
 logger = logging.getLogger(__name__)
 
 _optimizer_model_client = None  # Will be initialized in lifespan
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> TokenData:
+    credentials_exception = HTTPException(
+        status_code=http_status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate Firebase credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        decoded_token = firebase_auth.verify_id_token(token)
+        firebase_uid = decoded_token.get("uid")
+        if not firebase_uid:
+            raise credentials_exception
+        logger.debug(f"Firebase ID Token validated for Firebase UID: {firebase_uid}")
+        return TokenData(
+            user_id=firebase_uid
+        )  # Storing Firebase UID in user_id field of TokenData
+    except firebase_exceptions.FirebaseError as e:
+        logger.warning(f"Firebase ID Token verification failed: {e}")
+        raise credentials_exception
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during Firebase token verification: {e}", exc_info=True
+        )
+        raise credentials_exception
 
 
 @asynccontextmanager
@@ -40,13 +73,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Prompt Optimization Service",
     description="Optimizes user's natural language prompts for the Fixture Scout AI.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 
 @app.post("/prompts/optimize", response_model=PromptOptimizeResponse)
-async def api_optimize_prompt(request_data: PromptOptimizeRequest = Body(...)):
+async def api_optimize_prompt(
+    request_data: PromptOptimizeRequest = Body(...),
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Receives a raw user prompt and returns an optimized version using an LLM.
     """
@@ -58,15 +94,15 @@ async def api_optimize_prompt(request_data: PromptOptimizeRequest = Body(...)):
 
     try:
         logger.info(
-            f"API: Received prompt optimization request for user_id: {request_data.user_id}"
+            f"API: Received prompt optimization request for user_id: {current_user.user_id}"
         )
         optimized_text = await optimize_user_prompt(
-            _optimizer_model_client, request_data
+            _optimizer_model_client, current_user.user_id, request_data
         )
 
         if not optimized_text.strip():  # If LLM returns empty string after stripping
             logger.warning(
-                f"API: Optimization resulted in an empty prompt for user_id: {request_data.user_id}. Returning original."
+                f"API: Optimization resulted in an empty prompt for user_id: {current_user.user_id}. Returning original."
             )
             # Fallback: return original prompt if optimization fails or is empty
             # Or, you could return an error or a specific message.
@@ -85,7 +121,7 @@ async def api_optimize_prompt(request_data: PromptOptimizeRequest = Body(...)):
         )
     except OptimizationError as e:
         logger.error(
-            f"API: Optimization failed for user_id {request_data.user_id}: {e}",
+            f"API: Optimization failed for user_id {current_user.user_id}: {e}",
             exc_info=True,
         )
         # Return the original prompt in case of optimization failure,
@@ -99,7 +135,7 @@ async def api_optimize_prompt(request_data: PromptOptimizeRequest = Body(...)):
         )
     except Exception as e:
         logger.error(
-            f"API: Unexpected error during prompt optimization for user_id {request_data.user_id}: {e}",
+            f"API: Unexpected error during prompt optimization for user_id {current_user.user_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(

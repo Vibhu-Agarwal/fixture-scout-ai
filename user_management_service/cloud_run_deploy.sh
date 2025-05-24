@@ -2,7 +2,7 @@
 set -e
 
 # --- Configuration ---
-export SERVICE_VERSION="0.3.0"
+export SERVICE_VERSION="0.4.0"
 export SERVICE_NAME="user-management-service"
 export GCP_PROJECT_ID_VAR=$(gcloud config get-value project)
 if [ -z "$GCP_PROJECT_ID_VAR" ]; then
