@@ -43,15 +43,11 @@ echo "----------------------------------------------------"
 # --- Deployment Command ---
 echo "Deploying ${SERVICE_NAME} to Cloud Run..."
 
-# This service will eventually be called by the UI.
-# For initial deployment and testing, --allow-unauthenticated is fine.
-# Later, it should be fronted by an API Gateway and secured.
 gcloud run deploy "${SERVICE_NAME}" \
     --image="${IMAGE_TAG_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --allow-unauthenticated \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="GCP_REGION=${REGION}" \
     --set-env-vars="LOG_LEVEL=INFO" \

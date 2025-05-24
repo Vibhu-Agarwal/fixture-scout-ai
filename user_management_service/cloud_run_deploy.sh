@@ -36,7 +36,6 @@ gcloud run deploy "${SERVICE_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --allow-unauthenticated \
     --update-secrets=JWT_SECRET_KEY="${JWT_SECRET_NAME}:latest" \
     --update-secrets=GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID_SECRET_NAME}:latest" \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
