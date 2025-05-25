@@ -177,3 +177,4 @@ localdev/
 .DS_Store
 
 openapi.yaml
+node_modules/
