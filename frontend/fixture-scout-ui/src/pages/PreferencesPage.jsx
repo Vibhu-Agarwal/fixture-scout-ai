@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { getUserPreferences, setUserPreferences, optimizePrompt } from '../services/api'; // Import your API functions
+import { getDisplayErrorMessage } from '../utils/errorUtils';
 
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
@@ -43,7 +44,7 @@ function PreferencesPage() {
             setPromptForScout(currentScoutPrompt); // This is what's active for scout
         } catch (err) {
             console.error("Failed to load preferences:", err);
-            setError(err.detail || err.message || "Failed to load preferences. Please try again.");
+            setError(getDisplayErrorMessage(err, "Failed to load preferences. Please try again."));
         } finally {
             setIsLoading(false);
         }
@@ -71,7 +72,7 @@ function PreferencesPage() {
             setSuccessMessage("Prompt optimized successfully! Review and save.");
         } catch (err) {
             console.error("Failed to optimize prompt:", err);
-            setError(err.detail || err.message || "Failed to optimize prompt. You can still use your manually entered prompt.");
+            setError(getDisplayErrorMessage(err, "Failed to optimize prompt. You can still use your manually entered prompt."));
             setOptimizedPromptFromAPI(''); // Clear if optimization fails
         } finally {
             setIsOptimizing(false);
@@ -107,7 +108,7 @@ function PreferencesPage() {
             setSuccessMessage("Preferences saved successfully!");
         } catch (err) {
             console.error("Failed to save preferences:", err);
-            setError(err.detail || err.message || "Failed to save preferences. Please try again.");
+            setError(getDisplayErrorMessage(err, "Failed to save preferences. Please try again."));
         } finally {
             setIsSaving(false);
         }

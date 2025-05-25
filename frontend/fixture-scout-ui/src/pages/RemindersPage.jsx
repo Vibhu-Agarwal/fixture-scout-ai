@@ -71,7 +71,7 @@ function RemindersPage() {
             setReminders(response.reminders || []);
         } catch (err) {
             console.error("Failed to load reminders:", err);
-            setError(err.detail || err.message || "Failed to load reminders. Please try again.");
+            setError(getDisplayErrorMessage(err, "Failed to load reminders. Please try again."));
             setReminders([]); // Clear reminders on error
         } finally {
             setIsLoading(false);
@@ -109,7 +109,7 @@ function RemindersPage() {
             // or re-fetch reminders if the backend changes its status based on feedback (not currently planned).
         } catch (err) {
             console.error("Failed to submit feedback:", err);
-            setError(err.detail || err.message || "Failed to submit feedback. Please try again.");
+            setError(getDisplayErrorMessage(err, "Failed to submit feedback. Please try again."));
             // Keep dialog open on error to show message, or close and show global error.
         } finally {
             setIsSubmittingFeedback(false);
