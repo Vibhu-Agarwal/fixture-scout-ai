@@ -1,83 +1,201 @@
 // src/App.jsx
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import React, { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, Link as RouterLink, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ThemeProvider, createTheme, CssBaseline, CircularProgress, Box, Container, AppBar, Toolbar, Typography, Button } from '@mui/material';
-import ProtectedRoute from './components/ProtectedRoute'; // Assuming this exists
+import {
+  ThemeProvider,
+  createTheme,
+  CssBaseline,
+  CircularProgress,
+  Box,
+  Container,
+  AppBar,
+  Toolbar,
+  Typography,
+  Button,
+  IconButton,
+  Menu,
+  MenuItem,
+  Tooltip,
+  Divider
+  // Stack // We might not need Stack if we manage flex items directly in Toolbar
+} from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
+import AccountCircle from '@mui/icons-material/AccountCircle';
 
 // Import your page components
 import LoginPage from './pages/LoginPage';
 import PreferencesPage from './pages/PreferencesPage';
 import RemindersPage from './pages/RemindersPage';
+import ProtectedRoute from './components/ProtectedRoute';
 
-const NotFoundPage = () => <Typography variant="h4" sx={{ p: 2, textAlign: 'center', mt: 4 }}>404 - Page Not Found</Typography>;
+const NotFoundPage = () => <Typography variant="h4" sx={{ p: 2 }}>404 - Page Not Found</Typography>;
 
 const theme = createTheme({ /* ... your theme ... */ });
 
 function MainLayout() {
   const { isAuthenticated, logoutUser, currentUser } = useAuth();
+  const navigate = useNavigate();
+
+  const [anchorElNav, setAnchorElNav] = useState(null);
+  const [anchorElUser, setAnchorElUser] = useState(null);
+
+  const handleOpenNavMenu = (event) => setAnchorElNav(event.currentTarget);
+  const handleCloseNavMenu = () => setAnchorElNav(null);
+  const handleOpenUserMenu = (event) => setAnchorElUser(event.currentTarget);
+  const handleCloseUserMenu = () => setAnchorElUser(null);
+
+  const handleNavAndClose = (path) => {
+    navigate(path);
+    handleCloseNavMenu();
+    handleCloseUserMenu();
+  };
+
+  const handleLogoutAndClose = () => {
+    logoutUser();
+    handleCloseUserMenu();
+    navigate('/login');
+  };
+
+  const navLinks = [
+    { label: 'Preferences', path: '/preferences' },
+    { label: 'Reminders', path: '/reminders' },
+  ];
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}> {/* Ensure layout takes full height */}
+    <>
       <AppBar position="static">
-        {/* Toolbar is usually fine, it's for internal spacing. AppBar itself should be full width. */}
-        {/* If AppBar is not full width, something is wrong with its parent or CssBaseline isn't working as expected */}
-        <Container maxWidth="xl"> {/* Or use false for completely fluid, or keep lg if that's desired max for content *within* appbar */}
-          <Toolbar disableGutters> {/* disableGutters removes default padding if you want edge-to-edge Toolbar content */}
-            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              Fixture Scout AI
+        <Container maxWidth="xl">
+          <Toolbar disableGutters>
+
+            {/* Hamburger Menu for Mobile (isAuthenticated) - Placed on the Left */}
+            {isAuthenticated && (
+              <Box sx={{ display: { xs: 'flex', md: 'none' }, mr: 1 }}> {/* Added mr for spacing */}
+                <IconButton
+                  size="large"
+                  aria-label="navigation menu"
+                  onClick={handleOpenNavMenu}
+                  color="inherit"
+                >
+                  <MenuIcon />
+                </IconButton>
+                <Menu
+                  id="menu-appbar-nav"
+                  anchorEl={anchorElNav}
+                  anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                  keepMounted
+                  transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                  open={Boolean(anchorElNav)}
+                  onClose={handleCloseNavMenu}
+                >
+                  {navLinks.map((link) => (
+                    <MenuItem key={link.label} onClick={() => handleNavAndClose(link.path)}>
+                      <Typography textAlign="center">{link.label}</Typography>
+                    </MenuItem>
+                  ))}
+                </Menu>
+              </Box>
+            )}
+
+            {/* App Title/Logo */}
+            <Typography
+              variant="h6"
+              noWrap
+              component={RouterLink}
+              to="/"
+              sx={{
+                mr: 2, // Margin right for spacing
+                // Display logic:
+                // - On xs (mobile): display if NOT authenticated OR if authenticated but NO hamburger (which isn't our case here with hamburger)
+                // - On md (desktop): always display
+                // Better logic: make it grow and center itself if it's the main element.
+                display: 'flex', // Always display as flex item
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                letterSpacing: '.1rem',
+                color: 'inherit',
+                textDecoration: 'none',
+                // This will make it take available space and allow centering if other elements are fixed width
+                flexGrow: 1,
+                // Center the title text itself if it's the only growing element
+                // This works well when hamburger and user icon are on either side
+                justifyContent: { xs: 'center', md: 'flex-start' }, // Center on mobile, start on desktop
+                // If hamburger isn't there (e.g. not authenticated), it will naturally center better.
+                // Let's refine the centering with a wrapper Box for the title if needed.
+              }}
+            >
+              FixtureScout
             </Typography>
-            {isAuthenticated && currentUser && (
-              <Typography sx={{ mr: 2 }}>
-                Hello, {currentUser.displayName || currentUser.email}
-              </Typography>
+
+            {/* Desktop Navigation Links (isAuthenticated) - Placed after title on desktop */}
+            {isAuthenticated && (
+              <Box sx={{ display: { xs: 'none', md: 'flex' }, ml: 'auto' }}> {/* Push to right after title */}
+                {navLinks.map((link) => (
+                  <Button
+                    key={link.label}
+                    onClick={() => handleNavAndClose(link.path)}
+                    sx={{ my: 2, color: 'white', display: 'block', mx: 1 }}
+                  >
+                    {link.label}
+                  </Button>
+                ))}
+              </Box>
             )}
-            {isAuthenticated ? (
-              <Button color="inherit" onClick={logoutUser}>Logout</Button>
-            ) : (
-              <Button color="inherit" component={RouterLink} to="/login">Login</Button>
-              // Using RouterLink for navigation without full page reload
-            )}
+
+            {/* Spacer: This will push User Area to the far right on desktop if nav links are present */}
+            {/* On mobile, if only title and user area, title with flexGrow:1 will center it against user area */}
+            {/* This might not be needed if title has flexGrow:1 and desktop nav is also present */}
+            {/* Let's remove this specific spacer and rely on flexGrow of title and placement of User Area */}
+            {/* <Box sx={{ flexGrow: 1 }} /> */}
+
+
+            {/* User Area (Login/Logout, User Name) - Placed on the Right */}
+            <Box sx={{ flexGrow: 0, ml: isAuthenticated ? 2 : 0 }}> {/* Add margin-left if authenticated to space from nav/title */}
+              {isAuthenticated && currentUser ? (
+                <>
+                  <Tooltip title="User Menu">
+                    <IconButton onClick={handleOpenUserMenu} sx={{ p: 0 }}>
+                      <AccountCircle sx={{ color: 'white', fontSize: '2rem' }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Menu
+                    sx={{ mt: '45px' }}
+                    id="menu-appbar-user"
+                    anchorEl={anchorElUser}
+                    anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    keepMounted
+                    transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    open={Boolean(anchorElUser)}
+                    onClose={handleCloseUserMenu}
+                  >
+                    <MenuItem disabled sx={{ justifyContent: 'center' }}>
+                      <Typography textAlign="center">
+                        {currentUser.displayName || currentUser.email.split('@')[0]}
+                      </Typography>
+                    </MenuItem>
+                    <Divider />
+                    <MenuItem onClick={handleLogoutAndClose} sx={{ justifyContent: 'center' }}>
+                      <Typography textAlign="center">Logout</Typography>
+                    </MenuItem>
+                  </Menu>
+                </>
+              ) : (
+                <Button color="inherit" component={RouterLink} to="/login">Login</Button>
+              )}
+            </Box>
           </Toolbar>
         </Container>
       </AppBar>
-
-      {/* Main content area */}
-      {/* Using component="main" for semantic HTML and flexGrow to take available space */}
-      <Container
-        component="main"
-        maxWidth="xl" // << TRY CHANGING THIS: 'xl', 'lg', 'md', or false for fluid
-        // If you set it to 'false', it will try to be 100% width of viewport.
-        // 'xl' is often a good compromise for wide screens.
-        sx={{
-          flexGrow: 1, // Makes the container take up available vertical space
-          py: 3,      // Add some padding top and bottom
-          display: 'flex', // Added to help center content if maxWidth is hit
-          flexDirection: 'column' // Added to help center content
-        }}
-      >
-        <Outlet /> {/* This is where the routed page component will be rendered */}
+      <Container maxWidth="lg" sx={{ mt: 2, mb: 2 }}>
+        <Outlet />
       </Container>
-
-      {/* Optional Footer */}
-      <Box component="footer" sx={{ bgcolor: 'background.paper', py: 2, mt: 'auto' }}>
-        <Container maxWidth="lg">
-          <Typography variant="body2" color="text.secondary" align="center">
-            {'© '}
-            Fixture Scout AI {new Date().getFullYear()}
-            {'.'}
-          </Typography>
-        </Container>
-      </Box>
-    </Box>
+    </>
   );
 }
 
-// Need to import RouterLink for proper navigation with react-router
-import { Link as RouterLink } from 'react-router-dom';
-
-
+// App function with Routes remains the same
 function App() {
+  // ... (same as before) ...
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
