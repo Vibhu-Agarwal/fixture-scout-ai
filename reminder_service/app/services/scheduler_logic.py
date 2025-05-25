@@ -52,11 +52,13 @@ async def fetch_and_process_due_reminders(
     failed_to_queue = 0
     skipped_due_to_data_issues = 0
 
+    cutoff_time_utc = now_utc + datetime.timedelta(minutes=5)
+
     # This part remains largely the same, but calls will be to local/imported functions
     due_reminders_query = (
         db.collection(settings.REMINDERS_COLLECTION)
         .where("status", "==", "pending")
-        # .where("actual_reminder_time_utc", "<=", now_utc)
+        .where("actual_reminder_time_utc", "<=", cutoff_time_utc)
         .limit(200)  # Keep the limit for safety
         .stream()
     )

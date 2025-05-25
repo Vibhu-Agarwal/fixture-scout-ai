@@ -52,9 +52,10 @@ gcloud run deploy "${SERVICE_NAME}" \
     --set-env-vars="PHONE_MOCK_NOTIFICATIONS_TOPIC_ID=${PHONE_MOCK_NOTIFICATIONS_TOPIC_ID}" \
     --set-env-vars="NOTIFICATION_STATUS_UPDATE_TOPIC_ID_TO_SUBSCRIBE=${NOTIFICATION_STATUS_UPDATE_TOPIC_ID_TO_SUBSCRIBE}" \
     --timeout=300s \
-    --concurrency=100 # Can handle some concurrent scheduler hits or Pub/Sub pushes
+    --concurrency=100 \
     --min-instances=0 \
-    --max-instances=2 # Start low, adjust based on load
+    --max-instances=2
+    # Start low, adjust based on load
     # Service account for this service will need:
     # - Cloud Datastore User (for Firestore read/write)
     # - Pub/Sub Publisher (to publish to notification topics)
