@@ -29,7 +29,6 @@ paths:
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
         path_translation: APPEND_PATH_TO_ADDRESS
-        jwt_audience: "%%USER_MANAGEMENT_SERVICE_URL%%"
       parameters:
         - name: body
           in: body
