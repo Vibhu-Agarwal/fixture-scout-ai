@@ -28,7 +28,8 @@ paths:
       operationId: "ensureFirebaseUserProfile"
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
-        path_translation: CONSTANT_ADDRESS
+        path_translation: APPEND_PATH_TO_ADDRESS
+        jwt_audience: "%%USER_MANAGEMENT_SERVICE_URL%%"
       parameters:
         - name: body
           in: body
@@ -53,6 +54,7 @@ paths:
         - firebase_auth: []
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+        path_translation: APPEND_PATH_TO_ADDRESS
       responses:
         "200":
           description: "User preferences."
@@ -67,6 +69,7 @@ paths:
         - firebase_auth: []
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+        path_translation: APPEND_PATH_TO_ADDRESS
       parameters:
         - name: body
           in: body
@@ -88,6 +91,7 @@ paths:
         - firebase_auth: []
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+        path_translation: APPEND_PATH_TO_ADDRESS
       responses:
         "200":
           description: "List of user reminders."
@@ -103,6 +107,7 @@ paths:
         - firebase_auth: []
       x-google-backend:
         address: "%%USER_MANAGEMENT_SERVICE_URL%%"
+        path_translation: APPEND_PATH_TO_ADDRESS
       parameters:
         - name: reminder_id
           in: path
@@ -133,6 +138,7 @@ paths:
         - firebase_auth: []
       x-google-backend:
         address: "%%PROMPT_OPTIMIZATION_SERVICE_URL%%"
+        path_translation: APPEND_PATH_TO_ADDRESS
       parameters:
         - name: body
           in: body

@@ -236,6 +236,9 @@ async def get_or_create_user_profile_from_firebase_token(
     in Firestore using the Firebase UID as the primary key.
     Returns the UserResponse.
     """
+    logger.info(
+        f"Attempting to verify Firebase ID Token: {firebase_id_token[:10]}... (truncated for security)"
+    )
     try:
         decoded_token = firebase_auth.verify_id_token(firebase_id_token)
         firebase_uid = decoded_token["uid"]  # This IS our user_id now

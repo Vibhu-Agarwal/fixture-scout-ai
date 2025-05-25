@@ -45,7 +45,7 @@ from .services.reminder_query_service import (
     get_user_future_reminders,
     ReminderQueryError,
 )
-from firebase_admin_init import initialize_firebase_admin
+from .firebase_admin_init import initialize_firebase_admin
 from firebase_admin import auth as firebase_auth, exceptions as firebase_exceptions
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
