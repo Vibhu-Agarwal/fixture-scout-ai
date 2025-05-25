@@ -174,7 +174,7 @@ function PreferencesPage() {
                                     setPromptForScout(e.target.value);
                                 }
                             }}
-                            placeholder="e.g., I want all Real Madrid games. Also, any important Champions League matches, especially knockout stages. Maybe some big derbies if they are interesting."
+                            placeholder="e.g., I’m a Madridista, so CL is obvious. London derbies. Culers only against our city neighbors in red and white. Some top notch big-hype CL matches, regardless of stage. International wise, Die Mannschaft is love. Also CR7 is my favorite player."
                             helperText="Describe the types of football matches you're interested in."
                         />
                         <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
