@@ -45,7 +45,7 @@ from .services.user_service import (
     FeedbackSubmissionError,
 )
 from .services.reminder_query_service import (
-    get_user_future_reminders,
+    get_user_reminders,
     ReminderQueryError,
 )
 from .firebase_admin_init import initialize_firebase_admin
@@ -239,7 +239,7 @@ async def api_get_user_reminders(
     """
     try:
         db = get_firestore_client()
-        reminders_list: List[UserReminderItem] = await get_user_future_reminders(
+        reminders_list: List[UserReminderItem] = await get_user_reminders(
             db, current_user.user_id
         )
         return UserRemindersListResponse(

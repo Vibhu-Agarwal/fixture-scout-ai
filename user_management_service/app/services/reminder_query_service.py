@@ -54,7 +54,7 @@ def _get_next_reminder_trigger_details(
     return next_trigger_time, next_trigger_mode, next_trigger_message
 
 
-async def get_user_future_reminders(
+async def get_user_reminders(
     db: firestore.Client, user_id: str
 ) -> List[UserReminderItem]:
     logger.info(f"Fetching future reminders for user_id: {user_id}")
@@ -72,13 +72,8 @@ async def get_user_future_reminders(
     reminders_query = (
         db.collection(settings.REMINDERS_COLLECTION)
         .where("user_id", "==", user_id)
-        .where(
-            "actual_reminder_time_utc", ">=", now_utc
-        )  # Key filter: only future actual reminders
-        .where("status", "in", relevant_statuses)  # Filter by relevant statuses
-        .order_by(
-            "actual_reminder_time_utc"
-        )  # Order by when the reminder will actually occur
+        # .where("status", "in", relevant_statuses)  # Filter by relevant statuses
+        .order_by("actual_reminder_time_utc")
         .stream()
     )
 

@@ -1,7 +1,7 @@
 // src/pages/RemindersPage.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { getUserReminders, submitReminderFeedback } from '../services/api'; // Import your API functions
+import { getUserReminders, submitReminderFeedback } from '../services/api';
 
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
@@ -23,56 +23,108 @@ import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import Grid from '@mui/material/Grid';
 
-import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt'; // Icon for "Not Interested"
+import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import EventIcon from '@mui/icons-material/Event';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import SportsSoccerIcon from '@mui/icons-material/SportsSoccer';
-import CampaignIcon from '@mui/icons-material/Campaign'; // For reminder mode
+import CampaignIcon from '@mui/icons-material/Campaign';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-
+import HistoryIcon from '@mui/icons-material/History';
+import UpcomingIcon from '@mui/icons-material/Upcoming';
 
 function ReminderStatusIcon({ status }) {
-    // Simple status to icon mapping
     if (status === "sent" || status === "delivered_mock" || status === "sent_mock_email" || status === "sent_mock_phone_call") {
-        return <Tooltip title={`Status: ${status}`}><CheckCircleOutlineIcon color="success" /></Tooltip>;
+        return <Tooltip title={`Status: ${status}`}><CheckCircleOutlineIcon color="success" fontSize="small" /></Tooltip>;
     } else if (status === "pending" || status === "queued_for_notification" || status === "triggered") {
-        return <Tooltip title={`Status: ${status}`}><HourglassEmptyIcon color="action" /></Tooltip>;
+        return <Tooltip title={`Status: ${status}`}><HourglassEmptyIcon color="action" fontSize="small" /></Tooltip>;
     } else if (status && status.startsWith("failed")) {
-        return <Tooltip title={`Status: ${status}`}><ErrorOutlineIcon color="error" /></Tooltip>;
+        return <Tooltip title={`Status: ${status}`}><ErrorOutlineIcon color="error" fontSize="small" /></Tooltip>;
     }
-    return <Tooltip title={`Status: ${status || 'Unknown'}`}><HelpOutlineIcon color="disabled" /></Tooltip>;
+    return <Tooltip title={`Status: ${status || 'Unknown'}`}><HelpOutlineIcon color="disabled" fontSize="small" /></Tooltip>;
+}
+
+function ReminderListItem({ reminder, onFeedbackClick }) {
+    return (
+        <React.Fragment>
+            <ListItem alignItems="flex-start" sx={{ py: 2 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+                    <Typography variant="h6" component="div" sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                        <SportsSoccerIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+                        {reminder.fixture_details.home_team_name} vs {reminder.fixture_details.away_team_name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                        {reminder.fixture_details.league_name}
+                        {reminder.fixture_details.stage && ` - ${reminder.fixture_details.stage}`}
+                    </Typography>
+                    <Typography variant="body1" sx={{ mb: 1 }}>
+                        <CampaignIcon sx={{ verticalAlign: 'middle', mr: 0.5, fontSize: '1.1rem' }} />
+                        Reminder: <strong>{reminder.custom_message}</strong> ({reminder.reminder_mode})
+                    </Typography>
+                    <Grid container spacing={1} sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
+                        <Grid item xs={12} sm={6} sx={{ display: 'flex', alignItems: 'center' }}>
+                            <EventIcon sx={{ fontSize: '1rem', mr: 0.5 }} />
+                            Kick-off: {new Date(reminder.kickoff_time_utc).toLocaleString()}
+                        </Grid>
+                        <Grid item xs={12} sm={6} sx={{ display: 'flex', alignItems: 'center' }}>
+                            <AccessTimeIcon sx={{ fontSize: '1rem', mr: 0.5 }} />
+                            Reminder at: {new Date(reminder.actual_reminder_time_utc).toLocaleString()}
+                        </Grid>
+                    </Grid>
+                    <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary', mt: 1, gap: 1 }}>
+                        <ReminderStatusIcon status={reminder.current_status} />
+                        <Typography variant="caption">Status: {reminder.current_status}</Typography>
+                        <Typography variant="caption">Importance: {reminder.importance_score}/5</Typography>
+                    </Box>
+                </Box>
+                <ListItemSecondaryAction sx={{ top: '50%', transform: 'translateY(-50%)' }}>
+                    <Tooltip title="Mark as Not Interested">
+                        <IconButton edge="end" aria-label="not interested" onClick={() => onFeedbackClick(reminder)}>
+                            <ThumbDownOffAltIcon />
+                        </IconButton>
+                    </Tooltip>
+                </ListItemSecondaryAction>
+            </ListItem>
+        </React.Fragment>
+    );
 }
 
 
 function RemindersPage() {
     const { firebaseIdToken, currentUser } = useAuth();
-    const [reminders, setReminders] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const [allReminders, setAllReminders] = useState([]); // Store all fetched reminders
+    const [isLoading, setIsLoading] = useState(true); // Start with loading true
     const [error, setError] = useState('');
-    const [successMessage, setSuccessMessage] = useState(''); // For feedback submission
+    const [successMessage, setSuccessMessage] = useState('');
 
-    // Feedback Dialog State
     const [openFeedbackDialog, setOpenFeedbackDialog] = useState(false);
     const [currentReminderForFeedback, setCurrentReminderForFeedback] = useState(null);
     const [feedbackReason, setFeedbackReason] = useState('');
     const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
+    const [currentTab, setCurrentTab] = useState(0); // 0 for Upcoming, 1 for Past
+
     const fetchReminders = useCallback(async () => {
-        if (!firebaseIdToken || !currentUser) return;
+        if (!firebaseIdToken || !currentUser) {
+            // If not authenticated, set loading to false and don't fetch
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         setError('');
         try {
             const response = await getUserReminders(firebaseIdToken);
-            // The API returns UserRemindersListResponse which has a 'reminders' array
-            setReminders(response.reminders || []);
+            setAllReminders(response.reminders || []);
         } catch (err) {
             console.error("Failed to load reminders:", err);
-            setError(getDisplayErrorMessage(err, "Failed to load reminders. Please try again."));
-            setReminders([]); // Clear reminders on error
+            setError(err.detail || err.message || "Failed to load reminders. Please try again.");
+            setAllReminders([]);
         } finally {
             setIsLoading(false);
         }
@@ -82,11 +134,38 @@ function RemindersPage() {
         fetchReminders();
     }, [fetchReminders]);
 
+    const { upcomingReminders, pastReminders } = useMemo(() => {
+        const now = new Date();
+        const upcoming = [];
+        const past = [];
+
+        allReminders.forEach(reminder => {
+            // The key for grouping is the reminder.actual_reminder_time_utc
+            if (new Date(reminder.actual_reminder_time_utc) >= now) {
+                upcoming.push(reminder);
+            } else {
+                past.push(reminder);
+            }
+        });
+
+        // Sort Upcoming: earliest reminder time at the top
+        upcoming.sort((a, b) => new Date(a.actual_reminder_time_utc) - new Date(b.actual_reminder_time_utc));
+        // Sort Past: latest reminder time at the top (most recent past)
+        past.sort((a, b) => new Date(b.actual_reminder_time_utc) - new Date(a.actual_reminder_time_utc));
+
+        return { upcomingReminders: upcoming, pastReminders: past };
+    }, [allReminders]);
+
+
+    const handleTabChange = (event, newValue) => {
+        setCurrentTab(newValue);
+    };
+
     const handleOpenFeedbackDialog = (reminder) => {
         setCurrentReminderForFeedback(reminder);
-        setFeedbackReason(''); // Reset reason
+        setFeedbackReason('');
         setOpenFeedbackDialog(true);
-        setSuccessMessage(''); // Clear previous success messages
+        setSuccessMessage('');
         setError('');
     };
 
@@ -103,100 +182,70 @@ function RemindersPage() {
         try {
             const payload = { feedback_reason_text: feedbackReason };
             await submitReminderFeedback(firebaseIdToken, currentReminderForFeedback.reminder_id, payload);
-            setSuccessMessage(`Feedback submitted for reminder: ${currentReminderForFeedback.fixture_details.home_team_name} vs ${currentReminderForFeedback.fixture_details.away_team_name}. This helps improve future suggestions!`);
+            setSuccessMessage(`Feedback submitted for reminder regarding: ${currentReminderForFeedback.fixture_details.home_team_name} vs ${currentReminderForFeedback.fixture_details.away_team_name}.`);
             handleCloseFeedbackDialog();
-            // Optionally, you could visually mark the reminder as "feedback submitted" in the UI
-            // or re-fetch reminders if the backend changes its status based on feedback (not currently planned).
+            // No need to re-fetch reminders here, as feedback doesn't change the reminder list itself,
+            // but rather influences future scouting runs.
         } catch (err) {
             console.error("Failed to submit feedback:", err);
-            setError(getDisplayErrorMessage(err, "Failed to submit feedback. Please try again."));
-            // Keep dialog open on error to show message, or close and show global error.
+            setError(err.detail || err.message || "Failed to submit feedback. Please try again.");
         } finally {
             setIsSubmittingFeedback(false);
         }
     };
 
+    const remindersToDisplay = currentTab === 0 ? upcomingReminders : pastReminders;
+    const tabLabel = currentTab === 0 ? "Upcoming" : "Past";
+
     if (isLoading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
+            <Container maxWidth="lg" sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
                 <CircularProgress />
-            </Box>
+            </Container>
         );
     }
 
     return (
         <Container maxWidth="lg">
-            <Typography variant="h4" component="h1" gutterBottom sx={{ mt: 2, mb: 3 }}>
-                Your Upcoming Reminders
+            <Typography variant="h4" component="h1" gutterBottom sx={{ mt: 2, mb: 1 }}>
+                Your Reminders
             </Typography>
 
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-            {successMessage && <Alert severity="success" sx={{ mb: 2 }}>{successMessage}</Alert>}
+            {successMessage && <Alert severity="success" sx={{ mb: 2, mt: openFeedbackDialog ? 0 : 2 }}>{successMessage}</Alert>}
 
-            {reminders.length === 0 && !isLoading && (
-                <Paper elevation={1} sx={{ p: 3, textAlign: 'center' }}>
+            <Paper elevation={1} sx={{ mb: 3 }}>
+                <Tabs value={currentTab} onChange={handleTabChange} centered indicatorColor="primary" textColor="primary">
+                    <Tab label="Upcoming" icon={<UpcomingIcon />} iconPosition="start" />
+                    <Tab label="Past" icon={<HistoryIcon />} iconPosition="start" />
+                </Tabs>
+            </Paper>
+
+            {remindersToDisplay.length === 0 && (
+                <Paper elevation={1} sx={{ p: 3, textAlign: 'center', mt: 2 }}>
                     <Typography variant="subtitle1">
-                        No upcoming reminders found.
+                        No {tabLabel.toLowerCase()} reminders found.
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        Once Fixture Scout AI identifies matches based on your preferences, they will appear here.
-                    </Typography>
+                    {currentTab === 0 &&
+                        <Typography variant="body2" color="text.secondary">
+                            Fixture Scout AI is working to find matches based on your preferences. Check back soon!
+                        </Typography>
+                    }
                 </Paper>
             )}
 
-            {reminders.length > 0 && (
+            {remindersToDisplay.length > 0 && (
                 <List component={Paper} elevation={2}>
-                    {reminders.map((reminder, index) => (
+                    {remindersToDisplay.map((reminder, index) => (
                         <React.Fragment key={reminder.reminder_id}>
-                            <ListItem alignItems="flex-start">
-                                <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
-                                    <Typography variant="h6" component="div">
-                                        <SportsSoccerIcon sx={{ verticalAlign: 'bottom', mr: 0.5 }} />
-                                        {reminder.fixture_details.home_team_name} vs {reminder.fixture_details.away_team_name}
-                                    </Typography>
-                                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                                        {reminder.fixture_details.league_name}
-                                        {reminder.fixture_details.stage && ` - ${reminder.fixture_details.stage}`}
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mb: 0.5 }}>
-                                        <CampaignIcon sx={{ verticalAlign: 'bottom', mr: 0.5, fontSize: '1.1rem' }} />
-                                        Next Reminder: <strong>{reminder.custom_message}</strong> ({reminder.reminder_mode})
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary', mb: 0.5, gap: 2 }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                            <EventIcon sx={{ fontSize: '1rem', mr: 0.5 }} />
-                                            <Typography variant="caption">
-                                                Kick-off: {new Date(reminder.kickoff_time_utc).toLocaleString()}
-                                            </Typography>
-                                        </Box>
-                                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                            <AccessTimeIcon sx={{ fontSize: '1rem', mr: 0.5 }} />
-                                            <Typography variant="caption">
-                                                Reminder at: {new Date(reminder.actual_reminder_time_utc).toLocaleString()}
-                                            </Typography>
-                                        </Box>
-                                    </Box>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary', fontSize: '0.8rem' }}>
-                                        <ReminderStatusIcon status={reminder.current_status} />
-                                        <Typography variant="caption" sx={{ ml: 0.5 }}>Status: {reminder.current_status}</Typography>
-                                        <Typography variant="caption" sx={{ ml: 1 }}>Importance: {reminder.importance_score}/5</Typography>
-                                    </Box>
-                                </Box>
-                                <ListItemSecondaryAction>
-                                    <Tooltip title="Mark as Not Interested">
-                                        <IconButton edge="end" aria-label="not interested" onClick={() => handleOpenFeedbackDialog(reminder)}>
-                                            <ThumbDownOffAltIcon />
-                                        </IconButton>
-                                    </Tooltip>
-                                </ListItemSecondaryAction>
-                            </ListItem>
-                            {index < reminders.length - 1 && <Divider variant="inset" component="li" />}
+                            <ReminderListItem reminder={reminder} onFeedbackClick={handleOpenFeedbackDialog} />
+                            {index < remindersToDisplay.length - 1 && <Divider variant="inset" component="li" />}
                         </React.Fragment>
                     ))}
                 </List>
             )}
 
-            {/* Feedback Dialog */}
+            {/* Feedback Dialog (same as before) */}
             <Dialog open={openFeedbackDialog} onClose={handleCloseFeedbackDialog} maxWidth="sm" fullWidth>
                 <DialogTitle>Provide Feedback</DialogTitle>
                 <DialogContent>
@@ -221,7 +270,7 @@ function RemindersPage() {
                         onChange={(e) => setFeedbackReason(e.target.value)}
                         helperText="Why was this reminder not relevant to you?"
                     />
-                    {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+                    {error && !isSubmittingFeedback && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>} {/* Show error in dialog if not submitting */}
                 </DialogContent>
                 <DialogActions sx={{ p: '16px 24px' }}>
                     <Button onClick={handleCloseFeedbackDialog} disabled={isSubmittingFeedback}>Cancel</Button>
