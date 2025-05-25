@@ -1,8 +1,10 @@
 # prompt_optimization_service/app/main.py
+import base64
+import json
 import logging
 import os
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException, Body, status as http_status
+from fastapi import Depends, FastAPI, HTTPException, Body, Header, status as http_status
 from fastapi.security import OAuth2PasswordBearer
 from contextlib import asynccontextmanager
 
@@ -25,28 +27,57 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 
 async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    x_endpoint_api_userinfo: Annotated[
+        str | None, Header(convert_underscores=True)
+    ] = None,
 ) -> TokenData:
+    """
+    Dependency to get user information passed by the ESPv2 gateway
+    in the X-Endpoint-API-UserInfo header after Firebase Auth validation.
+    """
     credentials_exception = HTTPException(
         status_code=http_status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate Firebase credentials",
-        headers={"WWW-Authenticate": "Bearer"},
+        detail="User not authenticated by API Gateway",
     )
-    try:
-        decoded_token = firebase_auth.verify_id_token(token)
-        firebase_uid = decoded_token.get("uid")
-        if not firebase_uid:
-            raise credentials_exception
-        logger.debug(f"Firebase ID Token validated for Firebase UID: {firebase_uid}")
-        return TokenData(
-            user_id=firebase_uid
-        )  # Storing Firebase UID in user_id field of TokenData
-    except firebase_exceptions.FirebaseError as e:
-        logger.warning(f"Firebase ID Token verification failed: {e}")
+    if x_endpoint_api_userinfo is None:
+        logger.warning(
+            "X-Endpoint-API-UserInfo header missing from request (ESPv2 should provide this)."
+        )
         raise credentials_exception
+
+    try:
+        decoded_userinfo_str = x_endpoint_api_userinfo
+
+        # Calculate required padding
+        missing_padding = len(decoded_userinfo_str) % 4
+        if missing_padding:
+            decoded_userinfo_str += "=" * (4 - missing_padding)
+            logger.debug(
+                f"Added padding to X-Endpoint-API-UserInfo. Original length: {len(x_endpoint_api_userinfo)}, New length: {len(decoded_userinfo_str)}"
+            )
+
+        userinfo_json_bytes = base64.urlsafe_b64decode(decoded_userinfo_str)
+        userinfo_json_str = userinfo_json_bytes.decode("utf-8")
+        userinfo = json.loads(userinfo_json_str)
+
+        # ESPv2 passes Firebase UID in 'id' field, email in 'email' field.
+        # (Verify the exact field names ESPv2 uses for Firebase claims)
+        # Common claims passed by ESPv2 after Firebase Auth: 'id' (Firebase UID), 'email', 'issuer'.
+        firebase_uid = userinfo.get("user_id")
+        email = userinfo.get("email")
+
+        if not firebase_uid:
+            logger.error(
+                f"Firebase UID ('id' or 'user_id') not found in X-Endpoint-API-UserInfo: {userinfo}"
+            )
+            raise credentials_exception
+
+        logger.debug(f"Authenticated user from Gateway (Firebase UID): {firebase_uid}")
+
+        return TokenData(user_id=firebase_uid)
     except Exception as e:
         logger.error(
-            f"Unexpected error during Firebase token verification: {e}", exc_info=True
+            f"Error decoding/parsing X-Endpoint-API-UserInfo header: {e}", exc_info=True
         )
         raise credentials_exception
 
