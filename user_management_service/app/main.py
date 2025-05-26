@@ -2,6 +2,7 @@
 import base64
 import json
 import logging
+import httpx
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -10,6 +11,7 @@ from fastapi import (
     Depends,
     status as http_status,
     Header,
+    BackgroundTasks,
 )
 from fastapi.security import (
     OAuth2PasswordBearer,
@@ -50,6 +52,11 @@ from .services.reminder_query_service import (
 )
 from .firebase_admin_init import initialize_firebase_admin
 from firebase_admin import auth as firebase_auth, exceptions as firebase_exceptions
+
+# For S2S auth token
+import google.auth.transport.requests
+import google.oauth2.id_token
+from google.auth.exceptions import DefaultCredentialsError
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
@@ -112,29 +119,98 @@ async def get_current_user(
         raise credentials_exception
 
 
+_s2s_http_client: httpx.AsyncClient | None = None
+
+
 # --- Lifespan Event Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _s2s_http_client
     logger.info("User Management & Preference Service starting up...")
     try:
         get_firestore_client()  # Initialize Firestore client
         initialize_firebase_admin()  # Ensure Firebase Admin SDK is initialized
-        logger.info("UserMgt Firestore client initialized successfully on startup.")
+        _s2s_http_client = httpx.AsyncClient(timeout=30.0)
+        logger.info(
+            "UserMgt Firestore client and S2S HTTP client initialized successfully on startup."
+        )
     except Exception as e:
         logger.critical(
             f"UserMgt: Failed to initialize Firestore client on startup: {e}",
             exc_info=True,
         )
     yield
+    if _s2s_http_client:
+        await _s2s_http_client.aclose()
+        logger.info("S2S HTTP client closed.")
     logger.info("User Management & Preference Service shutting down...")
 
 
 app = FastAPI(
     title="User Management & Preference Service",
     description="Manages user signups, preferences, authentication, and lists their reminders.",
-    version="0.4.0",
+    version="0.4.1",
     lifespan=lifespan,
 )
+
+
+async def trigger_scout_service_for_user(user_id: str, scout_service_url: str):
+    """
+    Makes an authenticated call to the Scout Service to process fixtures for a user.
+    """
+    if not _s2s_http_client:
+        logger.error(
+            f"Background Scout Trigger: S2S HTTP client not initialized. Cannot call Scout Service for user {user_id}."
+        )
+        return
+
+    if not scout_service_url:
+        logger.warning(
+            f"Background Scout Trigger: SCOUT_SERVICE_PROCESS_USER_URL not configured. Skipping immediate scout for user {user_id}."
+        )
+        return
+
+    logger.info(
+        f"Background Scout Trigger: Attempting to trigger Scout Service for user_id: {user_id} at {scout_service_url}"
+    )
+
+    try:
+        auth_req = google.auth.transport.requests.Request()
+
+        parsed_scout_url = httpx.URL(scout_service_url)
+        scout_service_audience = f"{parsed_scout_url.scheme}://{parsed_scout_url.host}"
+
+        id_token = google.oauth2.id_token.fetch_id_token(
+            auth_req, scout_service_audience
+        )
+        headers = {"Authorization": f"Bearer {id_token}"}
+
+        payload = {
+            "user_id": user_id
+        }  # Scout service /process-user-fixtures expects this
+
+        response = await _s2s_http_client.post(
+            scout_service_url, json=payload, headers=headers
+        )
+
+        if 200 <= response.status_code < 300:
+            logger.info(
+                f"Background Scout Trigger: Successfully triggered Scout Service for user {user_id}. Response: {response.status_code}"
+            )
+        else:
+            logger.error(
+                f"Background Scout Trigger: Failed to trigger Scout Service for user {user_id}. Status: {response.status_code}, Response: {response.text[:500]}"
+            )
+    except DefaultCredentialsError as e:
+        logger.error(
+            f"Background Scout Trigger: DefaultCredentialsError for S2S auth to Scout Service for user {user_id}. Ensure ADC or SA is configured correctly. Error: {e}",
+            exc_info=True,
+        )
+    except Exception as e:
+        logger.error(
+            f"Background Scout Trigger: Unexpected error calling Scout Service for user {user_id}: {e}",
+            exc_info=True,
+        )
 
 
 # This endpoint now primarily ensures user profile exists in your DB after Firebase client-side login.
@@ -171,6 +247,7 @@ async def api_ensure_firebase_user_profile(
 async def api_submit_user_preferences(
     preference_data: UserPreferenceSubmitRequest = Body(...),
     current_user: TokenData = Depends(get_current_user),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Allows an authenticated user to submit or update their LLM prompt preference.
@@ -181,6 +258,19 @@ async def api_submit_user_preferences(
         updated_preference = await set_user_preferences(
             db, current_user.user_id, preference_data
         )
+        if settings.SCOUT_SERVICE_PROCESS_USER_URL:
+            logger.info(
+                f"Preferences saved for user {current_user.user_id}. Adding background task to trigger scout service."
+            )
+            background_tasks.add_task(
+                trigger_scout_service_for_user,
+                current_user.user_id,
+                settings.SCOUT_SERVICE_PROCESS_USER_URL,
+            )
+        else:
+            logger.warning(
+                f"Preferences saved for user {current_user.user_id}, but SCOUT_SERVICE_PROCESS_USER_URL not set. Skipping immediate scout."
+            )
         return updated_preference
     # UserNotFoundError might not be directly applicable if user_id is from token,
     # but set_user_preferences could still internally check or have issues.

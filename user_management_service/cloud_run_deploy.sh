@@ -2,7 +2,7 @@
 set -e
 
 # --- Configuration ---
-export SERVICE_VERSION="0.4.0"
+export SERVICE_VERSION="0.4.1"
 export SERVICE_NAME="user-management-service"
 export GCP_PROJECT_ID_VAR=$(gcloud config get-value project)
 if [ -z "$GCP_PROJECT_ID_VAR" ]; then
@@ -16,8 +16,10 @@ export FIRESTORE_DATABASE_NAME="fixture-scout-ai-db"
 # Names of the secrets in Google Cloud Secret Manager
 export JWT_SECRET_NAME="FIXTURE_SCOUT_AI_JWT_SECRET"
 export GOOGLE_CLIENT_ID_SECRET_NAME="FIXTURE_SCOUT_AI_OAUTH_CLIENT_ID"
+export SCOUT_SERVICE_PROCESS_USER_URL_SECRET_NAME="SCOUT_SERVICE_PROCESS_USER_URL"
 
 export IMAGE_TAG_NAME="${REGION}-docker.pkg.dev/${GCP_PROJECT_ID_VAR}/${AR_REPO_NAME}/${SERVICE_NAME}:${SERVICE_VERSION}"
+
 
 echo "--- Deployment Configuration for ${SERVICE_NAME} ---"
 echo "Service Version: ${SERVICE_VERSION}"
@@ -27,6 +29,7 @@ echo "Image Tag: ${IMAGE_TAG_NAME}"
 echo "Firestore DB Name: ${FIRESTORE_DATABASE_NAME}"
 echo "JWT Secret Name: ${JWT_SECRET_NAME}"
 echo "Google Client ID Secret Name: ${GOOGLE_CLIENT_ID_SECRET_NAME}"
+echo "Scout Service Process User URL Secret Name: ${SCOUT_SERVICE_PROCESS_USER_URL_SECRET_NAME}"
 echo "----------------------------------------------------"
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run..."
@@ -38,6 +41,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --platform=managed \
     --update-secrets=JWT_SECRET_KEY="${JWT_SECRET_NAME}:latest" \
     --update-secrets=GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID_SECRET_NAME}:latest" \
+    --update-secrets=SCOUT_SERVICE_PROCESS_USER_URL="${SCOUT_SERVICE_PROCESS_USER_URL_SECRET_NAME}:latest" \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \
@@ -56,6 +60,6 @@ gcloud run deploy "${SERVICE_NAME}" \
 echo "----------------------------------------------------"
 echo "Deployment of ${SERVICE_NAME} initiated."
 echo "Service URL will be outputted by gcloud. Note it down."
-echo "Ensure the runtime service account for '${SERVICE_NAME}' has 'Secret Manager Secret Accessor' role for '${JWT_SECRET_NAME}' and '${GOOGLE_CLIENT_ID_SECRET_NAME}'."
+echo "Ensure the runtime service account for '${SERVICE_NAME}' has 'Secret Manager Secret Accessor' role'."
 echo "It also needs 'Cloud Datastore User' role."
 echo "----------------------------------------------------"

@@ -10,6 +10,10 @@ class Settings:
     FIRESTORE_DATABASE_NAME: str | None = os.getenv("FIRESTORE_DATABASE_NAME")
     GCP_PROJECT_ID: str | None = os.getenv("GCP_PROJECT_ID")
 
+    SCOUT_SERVICE_PROCESS_USER_URL: str | None = os.getenv(
+        "SCOUT_SERVICE_PROCESS_USER_URL"
+    )
+
     # Firestore Collection Names
     USERS_COLLECTION: str = "users"
     USER_PREFERENCES_COLLECTION: str = "user_preferences"
@@ -46,4 +50,10 @@ if not settings.GOOGLE_CLIENT_ID:
 
     logging.warning(
         "WARNING: GOOGLE_CLIENT_ID is not set. Google ID Token verification might fail or be insecure."
+    )
+if not settings.SCOUT_SERVICE_PROCESS_USER_URL:
+    import logging
+
+    logging.warning(
+        "SCOUT_SERVICE_PROCESS_USER_URL is not set. Immediate scouting on preference save will be disabled."
     )
