@@ -18,101 +18,205 @@ Fixture Scout AI is a cloud-native, end-to-end system that:
 
 ## Architecture Diagram
 
+The Fixture Scout AI system is organized into three main functional domains, each handling specific aspects of the end-to-end workflow:
+
+### System Overview
+
 ```mermaid
 flowchart TD
-    A["User (Web App)"]
-    B["API Gateway (Firebase Auth)"]
-    C["User Management Service"]
-    D["Prompt Optimization Service"]
-    E["Scout Service (LLM)"]
-    F["Reminder Service"]
-    G["Notification Service"]
-    H["Football Data Fetcher Service"]
-    I["Firestore DB"]
-    J["Pub/Sub"]
-    K["Vertex AI Gemini"]
-    L["External Football APIs"]
-    M["User Devices (Email/Phone)"]
+    %% User Interaction & Management Section
+    subgraph "User Interaction & Management"
+        UI[Web App<br/>React + Material UI]
+        API[API Gateway<br/>ESPv2 + Firebase Auth]
+        UMS[User Management Service]
+        POS[Prompt Optimization Service<br/>LLM: Gemini]
+    end
 
-    A -- "HTTP/REST" --> B
-    B -- "REST" --> C
-    B -- "REST" --> D
-    B -- "REST" --> E
-    B -- "REST" --> F
-    C -- "User/Prefs" --> I
-    D -- "Optimized Prompt" --> E
-    E -- "Reminder Data" --> F
-    F -- "Reminder Events" --> J
-    F -- "Reminder Status" --> I
-    J -- "Notification Events" --> G
-    G -- "Status Updates" --> I
-    H -- "Fixture Data" --> I
-    E -- "LLM Calls" --> K
-    C -- "Feedback" --> D
-    A -- "Feedback/Prefs" --> C
-    A -- "Reminder Status" --> F
-    A -- "View Reminders" --> F
-    A -- "Preferences" --> C
-    A -- "Feedback" --> C
-    H -- "Fetches Data" --> L
-    G -- "Sends Email/Mock Call" --> M
+    %% Data Processing & Core Logic Section
+    subgraph "Data Processing & Core Logic"
+        FDFS[Football Data Fetcher Service<br/>Runs Daily]
+        SS[Scout Service<br/>LLM: Gemini<br/>Runs Periodically]
+    end
+
+    %% Notification & Scheduling Section
+    subgraph "Notification & Scheduling"
+        RS[Reminder Service<br/>Scheduler + Status Updater]
+        NS[Notification Service<br/>Email/Mock Phone]
+    end
+
+    %% External Systems
+    subgraph "External Systems"
+        FA[Firebase Auth]
+        FS[Firestore DB]
+        PS[Pub/Sub]
+        VAI[Vertex AI Gemini]
+        EFA[External Football APIs]
+        CS[Cloud Scheduler]
+    end
+
+    %% User Interaction Flows
+    UI -->|HTTP/REST| API
+    API -->|Auth Token| FA
+    API -->|REST| UMS
+    API -->|REST| POS
+    API -->|REST| SS
+    API -->|REST| RS
+
+    %% Prompt Optimization Flow
+    POS -->|Optimized Prompt| SS
+    UMS -->|User Preferences| SS
+    UMS -->|Reminder Feedback| SS
+
+    %% Data Fetching Flow
+    FDFS -->|Fetches Data| EFA
+    FDFS -->|Fixture Data| FS
+
+    %% Core Processing Flow
+    SS -->|LLM Calls| VAI
+    SS -->|Reads Fixtures| FS
+    SS -->|Reads Preferences| FS
+    SS -->|Reads Feedback| FS
+    SS -->|Generated Reminders| RS
+
+    %% Scheduling & Notification Flow
+    RS -->|Reminder Events| PS
+    PS -->|Notification Events| NS
+    RS -->|Status Updates| FS
+    NS -->|Status Updates| PS
+    PS -->|Status Updates| RS
+
+    %% Scheduling Triggers
+    CS -->|Daily 00:05 UTC| FDFS
+    CS -->|Daily 00:30 UTC| SS
+    CS -->|Every 10 min| RS
+
+    %% Database Storage
+    UMS -->|User Data| FS
+    UMS -->|Preferences| FS
+    UMS -->|Feedback| FS
+    RS -->|Reminder Status| FS
+    NS -->|Notification Logs| FS
+
+    %% Styling
+    classDef userSection fill:#e1f5fe
+    classDef processingSection fill:#f3e5f5
+    classDef notificationSection fill:#e8f5e8
+    classDef externalSection fill:#fff3e0
+
+    class UI,API,UMS,POS userSection
+    class FDFS,SS processingSection
+    class RS,NS notificationSection
+    class FA,FS,PS,VAI,EFA,CS externalSection
 ```
+
+### Detailed Data Flow
+
+1. **User Onboarding & Preferences (Top Section)**
+   - User signs up via React web app with Firebase Auth
+   - User enters football interests in natural language
+   - Prompt Optimization Service uses Gemini to refine user input
+   - User Management Service stores preferences and handles feedback
+
+2. **Data Processing & Match Selection (Middle Section)**
+   - Football Data Fetcher Service runs daily to pull fixtures from external APIs
+   - Scout Service runs periodically to process fixtures for all users
+   - Uses Gemini LLM to select relevant matches based on preferences and feedback
+   - Generates personalized reminders with timing and custom messages
+
+3. **Reminder Scheduling & Delivery (Bottom Section)**
+   - Reminder Service schedules reminders and publishes to Pub/Sub
+   - Notification Service consumes Pub/Sub events and sends notifications
+   - Status updates flow back through the system for tracking
+
+### Key Timing & Execution
+
+- **Daily at 00:05 UTC**: Football Data Fetcher Service runs
+- **Daily at 00:30 UTC**: Scout Service processes all users
+- **Every 10 minutes**: Reminder Service checks for due reminders
+- **Real-time**: User interactions and feedback processing
+
+### Technology Stack
+
+- **Frontend**: React, Material UI, Firebase Auth
+- **API Gateway**: Google Cloud Endpoints (ESPv2), OpenAPI
+- **Backend Services**: Python FastAPI, Google Cloud Run
+- **Database**: Firestore (NoSQL)
+- **Message Queue**: Google Cloud Pub/Sub
+- **LLM**: Google Vertex AI Gemini
+- **Scheduling**: Google Cloud Scheduler
+- **Authentication**: Firebase Authentication
 
 ---
 
 ## Microservice Descriptions
 
+### User-Facing Services
+
 - **Frontend (fixture-scout-ui):**  
-  React + Material UI web app for user sign-up, preferences, reminders, and feedback. Auth via Firebase.
+  React + Material UI web application providing user interface for sign-up, preference management, reminder viewing, and feedback submission. Uses Firebase Authentication for user management.
 
 - **API Gateway:**  
-  Google Cloud Endpoints (ESPv2) with OpenAPI spec, authenticates users (Firebase) and routes requests to backend services.
+  Google Cloud Endpoints (ESPv2) with OpenAPI specification that handles authentication via Firebase and routes requests to appropriate backend services. Provides a unified entry point for all API calls.
+
+### Core Business Logic Services
 
 - **User Management Service:**  
-  Manages user profiles, preferences, and feedback. Handles authentication and stores user data in Firestore.
+  Manages user profiles, preferences, and feedback. Handles user authentication validation, stores user data in Firestore, and provides endpoints for preference management and feedback collection. Triggers Scout Service processing when preferences are updated.
 
 - **Prompt Optimization Service:**  
-  Uses Vertex AI Gemini to convert raw user preferences into clear, actionable prompts for the Scout Service.
+  Uses Vertex AI Gemini to convert raw user preferences (natural language) into clear, structured prompts optimized for the Scout Service. Ensures user intent is properly captured and formatted for LLM processing.
 
 - **Scout Service:**  
-  The “brain” of the system. Uses Vertex AI Gemini to select relevant matches for each user and generate reminder details, based on optimized prompts and user feedback.
-
-- **Reminder Service:**  
-  Schedules reminders, publishes events to Pub/Sub, and updates reminder statuses.
-
-- **Notification Service:**  
-  Consumes Pub/Sub events, sends (mock) email/phone notifications, and logs status updates.
+  The core AI processing engine. Uses Vertex AI Gemini to analyze upcoming fixtures against user preferences and feedback history. Generates personalized reminders with importance scores, custom messages, and optimal timing. Processes all users periodically via Cloud Scheduler orchestration.
 
 - **Football Data Fetcher Service:**  
-  Periodically fetches real football fixtures from external APIs and stores them in Firestore.
+  Fetches football fixture data from external APIs (supports Football-Data.org and mock data sources). Runs daily via Cloud Scheduler to ensure fresh fixture data is available for processing. Stores structured fixture data in Firestore.
+
+### Notification & Scheduling Services
+
+- **Reminder Service:**  
+  Dual-purpose service handling both scheduling and status management:
+  - **Scheduler Component**: Checks for due reminders every 10 minutes, publishes notification events to Pub/Sub
+  - **Status Updater Component**: Processes status updates from notification delivery and updates Firestore
+
+- **Notification Service:**  
+  Consumes Pub/Sub events and handles actual notification delivery. Currently implements mock email and phone call senders, with infrastructure ready for real notification providers (SendGrid, Twilio, etc.). Logs delivery status and publishes status updates back to Pub/Sub.
 
 ---
 
 ## How It Works: End-to-End Flow
 
-1. **User Onboarding:**  
-   User signs up via the web app (Firebase Auth). Profile is created in Firestore.
+### User Onboarding & Setup
+1. **User Registration:**  
+   User signs up via the React web app using Firebase Authentication. A user profile is automatically created in Firestore.
 
-2. **Preference Input:**  
-   User enters football interests in natural language (e.g., “I love Real Madrid and Champions League finals”).
+2. **Preference Configuration:**  
+   User enters football interests in natural language (e.g., "I love Real Madrid and Champions League finals"). The Prompt Optimization Service uses Gemini to convert this into a structured, LLM-friendly prompt optimized for match selection.
 
-3. **Prompt Optimization:**  
-   The Prompt Optimization Service refines the user’s input into a structured, LLM-friendly prompt.
+### Data Processing Pipeline
+3. **Fixture Data Collection:**  
+   The Football Data Fetcher Service runs daily at 00:05 UTC, pulling upcoming fixtures from external APIs (Football-Data.org or mock sources) and storing structured data in Firestore.
 
-4. **Fixture Fetching:**  
-   The Football Data Fetcher Service pulls upcoming fixtures from external APIs and stores them.
+4. **AI-Powered Match Selection:**  
+   The Scout Service runs daily at 00:30 UTC, processing all users. For each user, it:
+   - Retrieves their optimized preferences and recent feedback
+   - Analyzes upcoming fixtures using Vertex AI Gemini
+   - Generates personalized reminders with importance scores, custom messages, and optimal timing
+   - Stores reminder data in Firestore
 
-5. **Match Selection & Reminder Generation:**  
-   The Scout Service uses the optimized prompt, fixture data, and recent user feedback to select matches and generate personalized reminders (with timing, mode, and custom messages).
+### Notification & Delivery System
+5. **Reminder Scheduling:**  
+   The Reminder Service's Scheduler component runs every 10 minutes, checking for due reminders and publishing notification events to Pub/Sub.
 
-6. **Reminder Scheduling:**  
-   The Reminder Service schedules reminders and publishes events to Pub/Sub.
+6. **Notification Delivery:**  
+   The Notification Service consumes Pub/Sub events and sends notifications via configured channels (currently mock email/phone, ready for real providers).
 
-7. **Notification Delivery:**  
-   The Notification Service sends out reminders (email or mock phone call) and logs delivery status.
+7. **Status Tracking:**  
+   The Reminder Service's Status Updater component processes delivery status updates from Pub/Sub and updates Firestore with final delivery status.
 
-8. **User Feedback Loop:**  
-   Users can provide feedback on reminders, which is used to further refine future match selection.
+### Continuous Improvement Loop
+8. **User Feedback Integration:**  
+   Users can provide feedback on reminders through the web app. This feedback is stored and used in future match selection to improve personalization and avoid unwanted matches.
 
 ---
 
@@ -152,6 +256,13 @@ flowchart TD
 
 ### Deploy to Google Cloud
 
+#### Prerequisites
+- Google Cloud Project with billing enabled
+- Required APIs enabled: Cloud Run, Firestore, Pub/Sub, Cloud Scheduler, Vertex AI, Artifact Registry
+- Service account with appropriate IAM roles
+- Docker installed locally
+
+#### Service Deployment
 Each service has a `cloud_run_deploy.sh` script. Example for the Scout Service:
 
 ```bash
@@ -159,54 +270,168 @@ cd scout_service
 ./cloud_run_deploy.sh
 ```
 
-- Ensure you have set up Artifact Registry, enabled Cloud Run, Firestore, Pub/Sub, and have the correct IAM roles.
-- Use the scripts in `tools/gcp/` to set up Pub/Sub topics, Cloud Scheduler jobs, and service accounts.
+#### Infrastructure Setup
+Use the scripts in `tools/gcp/` to set up the complete infrastructure:
 
-### API Gateway
+1. **Service Accounts & Permissions:**
+   ```bash
+   cd tools/gcp
+   ./create_cloud_scheduler_svc_acounts.sh
+   ```
 
-- Use `api_gateway/deploy_endpoints_svc_config.sh` to deploy the OpenAPI spec and configure routing/auth.
+2. **Pub/Sub Topics & Subscriptions:**
+   ```bash
+   ./setup_pubsub_subscriptions.sh
+   ```
+
+3. **Cloud Scheduler Jobs:**
+   ```bash
+   ./setup_scheduler_jobs.sh
+   ```
+
+#### API Gateway Deployment
+Deploy the API Gateway with OpenAPI specification:
+
+```bash
+cd api_gateway
+./deploy_endpoints_svc_config.sh
+```
+
+#### Environment Configuration
+Each service requires specific environment variables. See individual service directories for `.env.example` files and required configuration.
+
+### Production Considerations
+
+- **Secrets Management**: Use Google Secret Manager for API keys and sensitive configuration
+- **Monitoring**: Set up Cloud Monitoring and Logging for production observability
+- **Scaling**: Configure Cloud Run services with appropriate memory and CPU limits
+- **Security**: Enable VPC connector if needed for private network access
 
 ---
 
-## LLM Prompt Format + Feedback Loop
+## LLM Integration & AI Processing
 
-- **Prompt Optimization:**  
-  User’s raw preferences are sent to the Prompt Optimization Service, which uses an LLM to generate a clear, actionable prompt for match selection.
+### Prompt Optimization Process
+The Prompt Optimization Service uses Vertex AI Gemini to convert user's natural language preferences into structured, actionable prompts. This ensures that user intent is properly captured and formatted for optimal LLM processing in the Scout Service.
 
-- **Match Selection Prompt:**  
-  The Scout Service constructs a prompt for Gemini that includes:
-  - The optimized user prompt.
-  - A list of upcoming fixtures (as JSON).
-  - Recent negative feedback (matches the user didn’t like, with reasons).
+### Scout Service AI Processing
+The Scout Service constructs comprehensive prompts for Gemini that include:
+- **Optimized user preferences** from the Prompt Optimization Service
+- **Upcoming fixtures data** (structured JSON from Football Data Fetcher Service)
+- **Recent user feedback** (negative feedback with reasons to avoid similar matches)
+- **Context about user's historical preferences** and interaction patterns
 
-- **LLM Output:**  
-  Gemini returns a JSON array of selected matches, each with:
-  - `fixture_id`
-  - `reason`
-  - `importance_score` (1-5)
-  - `reminder_triggers` (timing, mode, custom message)
+### LLM Output Structure
+Gemini returns a structured JSON response containing selected matches with:
+- `fixture_id`: Unique identifier for the match
+- `reason`: AI-generated explanation for why this match is relevant
+- `importance_score`: Numerical score (1-5) indicating match relevance
+- `reminder_triggers`: Detailed reminder configuration including:
+  - Timing (when to send the reminder)
+  - Mode (email or phone)
+  - Custom message (personalized notification text)
 
-- **Feedback Loop:**  
-  Users can mark reminders as “not interested” and provide reasons. This feedback is stored and included in future prompts to the LLM, helping it avoid similar unwanted matches.
+### Feedback Integration & Learning
+Users can provide feedback on reminders through the web interface:
+- **Positive feedback**: Confirms good match selection
+- **Negative feedback**: Includes reasons why a match wasn't relevant
+- **Feedback storage**: All feedback is stored in Firestore with timestamps
+- **Learning loop**: Recent negative feedback is included in future LLM prompts to improve personalization and avoid similar unwanted matches
+
+### AI Model Configuration
+- **Model**: Google Vertex AI Gemini (latest available version)
+- **Temperature**: Optimized for consistent, structured responses
+- **Safety filters**: Configured to ensure appropriate content
+- **Response format**: Structured JSON for reliable parsing
 
 ---
 
-## Limitations / What’s Not Done
+## Current Limitations & Future Enhancements
 
-- **Notification Service:**  
-  Currently uses mock email/phone call senders. Real integrations (e.g., Twilio, SendGrid) are not implemented.
-- **LLM Output Validation:**  
-  Assumes Gemini returns valid JSON; more robust error handling may be needed.
-- **Scalability:**  
-  Firestore and Pub/Sub are used, but very high user/fixture volumes may require further optimization.
-- **Admin/Monitoring UI:**  
-  No admin dashboard for monitoring reminders, feedback, or system health.
-- **Testing:**  
-  Automated tests and CI/CD pipelines are not included.
-- **Security:**  
-  Ensure all secrets are managed securely (e.g., Secret Manager in production).
-- **Internationalization:**  
-  Only English is supported in prompts and messages.
+### Production Readiness Gaps
+- **Notification Providers**: Currently uses mock email/phone call senders. Real integrations (SendGrid, Twilio, etc.) need to be implemented for production use.
+- **Error Handling**: LLM response validation could be more robust; currently assumes Gemini returns valid JSON consistently.
+- **Monitoring & Observability**: No comprehensive monitoring dashboard or alerting system for production deployment.
+
+### Scalability Considerations
+- **High-Volume Scenarios**: While Firestore and Pub/Sub are scalable, very high user/fixture volumes may require additional optimization and caching strategies.
+- **Rate Limiting**: No rate limiting implemented for API endpoints.
+- **Database Optimization**: Firestore queries could be optimized for large datasets.
+
+### Development & Operations
+- **Testing Coverage**: Limited automated tests; comprehensive unit and integration test suites needed.
+- **CI/CD Pipeline**: No automated deployment pipeline; currently uses manual shell scripts.
+- **Security Hardening**: Secrets management should use Google Secret Manager in production.
+- **Backup & Recovery**: No automated backup strategy for Firestore data.
+
+### Feature Enhancements
+- **Admin Dashboard**: No administrative interface for monitoring system health, user analytics, or manual operations.
+- **Internationalization**: Only English is supported in prompts and user interface.
+- **Advanced Analytics**: No user behavior analytics or system performance metrics.
+- **Mobile App**: Web-only interface; no native mobile application.
+- **Real-time Updates**: No WebSocket or real-time notification capabilities.
+
+### Data & Integration
+- **Football Data Sources**: Limited to Football-Data.org API; could expand to multiple data providers for better coverage.
+- **Historical Data**: No long-term storage of historical fixtures or user interaction data.
+- **Data Export**: No user data export functionality for GDPR compliance.
+
+---
+
+## Data Models & Database Structure
+
+### Firestore Collections
+
+The system uses Firestore as the primary database with the following collections:
+
+- **`users`**: User profiles and authentication data
+- **`user_preferences`**: User football preferences and optimized prompts
+- **`fixtures`**: Football match data from external APIs
+- **`reminders`**: Generated reminders with scheduling information
+- **`user_feedback`**: User feedback on reminders for learning
+- **`notification_logs`**: Delivery status and logs for notifications
+
+### Key Data Relationships
+
+- Users have one preference document and multiple feedback entries
+- Fixtures are shared across all users but filtered by individual preferences
+- Reminders link users to specific fixtures with personalized settings
+- Feedback influences future reminder generation through the LLM
+
+### Data Flow Patterns
+
+1. **Write-Heavy Operations**: User preferences, feedback, and notification logs
+2. **Read-Heavy Operations**: Fixture queries, reminder status checks
+3. **Batch Operations**: Daily fixture fetching and user processing
+4. **Real-time Updates**: Reminder status changes and notification delivery
+
+---
+
+## API Endpoints Overview
+
+### User Management Service
+- `POST /auth/firebase/ensure-profile` - User profile creation
+- `GET/PUT /preferences` - User preference management
+- `GET /reminders` - User reminder retrieval
+- `POST /reminders/{id}/feedback` - Feedback submission
+
+### Prompt Optimization Service
+- `POST /prompts/optimize` - Prompt optimization with LLM
+
+### Scout Service
+- `POST /scout/process-user-fixtures` - Process fixtures for specific user
+- `POST /scout/orchestrate-all-user-processing` - Process all users (scheduled)
+
+### Reminder Service
+- `POST /scheduler/check-and-dispatch-reminders` - Check due reminders (scheduled)
+- `POST /reminders/handle-status-update` - Handle notification status updates
+
+### Notification Service
+- `POST /notifications/handle/email` - Process email notifications
+- `POST /notifications/handle/phone-mock` - Process phone notifications
+
+### Football Data Fetcher Service
+- `POST /data-fetcher/fetch-and-store-all-fixtures` - Fetch fixtures (scheduled)
 
 ---
 
@@ -218,4 +443,4 @@ If you have ideas for new features, improvements, or want to help with real noti
 ---
 
 **Fixture Scout AI** is built to help fans never miss a match that matters.  
-Let’s make it even better—together!
+Let's make it even better—together!
