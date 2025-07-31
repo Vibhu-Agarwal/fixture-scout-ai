@@ -396,7 +396,22 @@ function MainLayout() {
                         },
                       }}
                     >
-                      <AccountCircle sx={{ fontSize: '2rem' }} />
+                      {currentUser.photoURL ? (
+                        <Box
+                          component="img"
+                          src={currentUser.photoURL}
+                          alt={currentUser.displayName || 'User'}
+                          sx={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: '50%',
+                            objectFit: 'cover',
+                            border: '2px solid #4ECDC4',
+                          }}
+                        />
+                      ) : (
+                        <AccountCircle sx={{ fontSize: '2rem' }} />
+                      )}
                     </IconButton>
                   </Tooltip>
                   <Menu
