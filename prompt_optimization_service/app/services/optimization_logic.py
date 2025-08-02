@@ -1,11 +1,7 @@
 # prompt_optimization_service/app/services/optimization_logic.py
 import logging
-from vertexai.generative_models import (
-    GenerativeModel,
-    GenerationConfig,
-    HarmCategory,
-    HarmBlockThreshold,
-)
+from google import genai
+from google.genai import types
 
 from ..models import PromptOptimizeRequest
 from ..config import settings
@@ -48,7 +44,7 @@ Optimized Prompt for Fixture Scout AI:
 
 
 async def optimize_user_prompt(
-    optimizer_model: GenerativeModel, user_id: str, request_data: PromptOptimizeRequest
+    client: genai.Client, user_id: str, request_data: PromptOptimizeRequest
 ) -> str:
     """
     Uses the optimizer LLM to refine the user's raw prompt.
@@ -62,24 +58,29 @@ async def optimize_user_prompt(
     logger.debug(f"Full meta-prompt for optimization: {full_meta_prompt}")
 
     try:
-        generation_config = GenerationConfig(
-            temperature=0.3,  # Lower temperature for more deterministic and structured output
-            max_output_tokens=512,  # Optimized prompt shouldn't be excessively long
-            # top_p=0.9,
-            # top_k=20,
-        )
         safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            types.HarmCategory.HARM_CATEGORY_HARASSMENT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
 
-        response = await optimizer_model.generate_content_async(
-            full_meta_prompt,
-            generation_config=generation_config,
-            safety_settings=safety_settings,
-            stream=False,
+        content_config = types.GenerateContentConfig(
+            temperature=settings.LLM_TEMPERATURE,
+            max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            safety_settings=[
+                types.SafetySetting(
+                    category=category,
+                    threshold=threshold,
+                )
+                for category, threshold in safety_settings.items()
+            ],
+        )
+
+        response = await client.aio.models.generate_content(
+            model=settings.OPTIMIZER_GEMINI_MODEL_NAME,
+            contents=full_meta_prompt,
+            config=content_config,
         )
 
         if hasattr(response, "text") and response.text:

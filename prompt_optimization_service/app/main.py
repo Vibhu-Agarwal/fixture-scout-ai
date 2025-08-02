@@ -13,14 +13,14 @@ from .utils.logging_config import setup_logging
 setup_logging()
 
 from .config import settings
-from .vertex_ai_client import get_optimizer_gemini_client  # Import the specific client
+from .vertex_ai_client import get_optimizer_genai_client  # Import the specific client
 from .models import PromptOptimizeRequest, PromptOptimizeResponse, TokenData
 from .services.optimization_logic import optimize_user_prompt, OptimizationError
 from firebase_admin import auth as firebase_auth, exceptions as firebase_exceptions
 
 logger = logging.getLogger(__name__)
 
-_optimizer_model_client = None  # Will be initialized in lifespan
+_optimizer_genai_client = None  # Will be initialized in lifespan
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
@@ -84,19 +84,17 @@ async def get_current_user(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _optimizer_model_client
+    global _optimizer_genai_client
     logger.info("Prompt Optimization Service starting up...")
     try:
-        _optimizer_model_client = (
-            get_optimizer_gemini_client()
-        )  # Initialize Vertex AI client
+        _optimizer_genai_client = get_optimizer_genai_client()
         logger.info("Optimizer Vertex AI client initialized successfully on startup.")
     except Exception as e:
         logger.critical(
             f"Failed to initialize Optimizer Vertex AI client on startup: {e}",
             exc_info=True,
         )
-        # Decide if app should exit or continue in a degraded state
+        raise
     yield
     logger.info("Prompt Optimization Service shutting down...")
 
@@ -117,7 +115,7 @@ async def api_optimize_prompt(
     """
     Receives a raw user prompt and returns an optimized version using an LLM.
     """
-    if not _optimizer_model_client:  # Should have been initialized by lifespan
+    if not _optimizer_genai_client:  # Should have been initialized by lifespan
         logger.error("API: Optimizer model client not available.")
         raise HTTPException(
             status_code=503, detail="Optimization service is not ready."
@@ -128,7 +126,7 @@ async def api_optimize_prompt(
             f"API: Received prompt optimization request for user_id: {current_user.user_id}"
         )
         optimized_text = await optimize_user_prompt(
-            _optimizer_model_client, current_user.user_id, request_data
+            _optimizer_genai_client, current_user.user_id, request_data
         )
 
         if not optimized_text.strip():  # If LLM returns empty string after stripping
@@ -161,8 +159,8 @@ async def api_optimize_prompt(
         # Alternatively, raise HTTPException(status_code=500, detail=str(e))
         return PromptOptimizeResponse(
             raw_user_prompt=request_data.raw_user_prompt,
-            optimized_user_prompt=request_data.raw_user_prompt,  # Fallback
-            model_used=f"fallback_due_to_error_with_{settings.OPTIMIZER_GEMINI_MODEL_NAME}",
+            optimized_user_prompt=request_data.raw_user_prompt,
+            model_used=settings.OPTIMIZER_GEMINI_MODEL_NAME,
         )
     except Exception as e:
         logger.error(
@@ -182,7 +180,7 @@ async def read_root():
 
 @app.get("/health")
 async def health_check():
-    optimizer_model_ok = bool(_optimizer_model_client)
+    optimizer_model_ok = bool(_optimizer_genai_client)
     if optimizer_model_ok:
         return {"status": "ok", "optimizer_model_initialized": True}
     else:

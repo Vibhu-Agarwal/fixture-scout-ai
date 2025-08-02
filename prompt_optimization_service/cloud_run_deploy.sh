@@ -26,7 +26,7 @@ export AR_REPO_NAME="fixture-scout-images" # Should be the same for all services
 # export FIRESTORE_DATABASE_NAME="fixture-scout-ai-db" # Optional for this service
 
 # Prompt Optimization Service Specific Environment Variables
-export OPTIMIZER_GEMINI_MODEL_NAME="gemini-1.5-flash" # Or your preferred Gemini model for optimization
+export OPTIMIZER_GEMINI_MODEL_NAME="gemini-2.5-flash"
 
 # Full Image Tag for Artifact Registry
 export IMAGE_TAG_NAME="${REGION}-docker.pkg.dev/${GCP_PROJECT_ID_VAR}/${AR_REPO_NAME}/${SERVICE_NAME}:${SERVICE_VERSION}"
@@ -48,8 +48,8 @@ gcloud run deploy "${SERVICE_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
-    --set-env-vars="GCP_REGION=${REGION}" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID_VAR}" \
+    --set-env-vars="GOOGLE_CLOUD_LOCATION=${REGION}" \
     --set-env-vars="LOG_LEVEL=INFO" \
     --set-env-vars="OPTIMIZER_GEMINI_MODEL_NAME=${OPTIMIZER_GEMINI_MODEL_NAME}" \
     --timeout=120s \
