@@ -13,9 +13,7 @@ class OptimizationError(Exception):
     pass
 
 
-def _construct_meta_prompt_for_optimization(raw_user_prompt: str) -> str:
-    # This meta-prompt is crucial and will need tuning.
-    meta_prompt = f"""
+system_prompt = """
 You are an AI assistant specialized in refining user preferences for football match reminders into highly effective prompts for another AI called "Fixture Scout AI".
 The "Fixture Scout AI" will use the optimized prompt you generate, along with a list of upcoming fixtures, to select relevant matches and schedule reminders for the user.
 
@@ -33,7 +31,11 @@ Consider the following aspects when optimizing:
 - **Match Significance:** Incorporate terms that imply importance if the user uses them (e.g., "big matches," "important games," "title deciders," "derbies").
 - **Player Milestones/Special Events:** If the user hints at interest in specific player-related events (e.g., "Messi's last season," "a legend's testimonial"), try to capture this if it's actionable for match selection.
 - **Negative Preferences:** If the user states teams or match types they *don't* want, this is also valuable (though the Fixture Scout AI is primarily for positive selection).
+"""
 
+
+def _construct_meta_prompt_for_optimization(raw_user_prompt: str) -> str:
+    meta_prompt = f"""
 **User's Raw Preferences:**
 "{raw_user_prompt}"
 
@@ -60,12 +62,13 @@ async def optimize_user_prompt(
     try:
         safety_settings = {
             types.HarmCategory.HARM_CATEGORY_HARASSMENT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
 
         content_config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
             temperature=settings.LLM_TEMPERATURE,
             max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
             safety_settings=[

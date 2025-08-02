@@ -11,11 +11,11 @@ def get_optimizer_genai_client() -> genai.Client:
     global _optimizer_client
     if _optimizer_client is None:
         try:
-            if (not settings.GCP_PROJECT_ID) or (not settings.GCP_REGION):
+            if not settings.GCP_PROJECT_ID:
                 raise ValueError(
-                    "GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION must be set in the environment variables."
+                    "GOOGLE_CLOUD_PROJECT must be set in the environment variables."
                 )
-            _optimizer_client = genai.Client(vertexai=True)
+            _optimizer_client = genai.Client(vertexai=True, location="global")
             logger.info(f"Optimizer Vertex AI GenAI client initialized successfully.")
         except Exception as e:
             logger.error(
