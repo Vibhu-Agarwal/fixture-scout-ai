@@ -15,7 +15,7 @@ from .services.reminder_processing_service import (
     LLMResponseError,
 )
 from .firestore_client import get_firestore_client
-from .vertex_ai_client import get_vertex_ai_gemini_client
+from .vertex_ai_client import get_vertex_ai_genai_client
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Scout Service",
     description="Processes fixtures using an LLM (Gemini via Vertex AI) to create personalized reminders.",
-    version="0.1.1",
+    version="0.2.0",
 )
 
 
@@ -32,12 +32,13 @@ async def lifespan(app: FastAPI):
     logger.info("Scout Service starting up...")
     try:
         get_firestore_client()
-        get_vertex_ai_gemini_client()
+        get_vertex_ai_genai_client()
         logger.info(
-            "Firestore and Vertex AI clients initialized successfully on startup."
+            "Firestore and Vertex AI GenAI clients initialized successfully on startup."
         )
     except Exception as e:
         logger.critical(f"Failed to initialize clients on startup: {e}", exc_info=True)
+        raise
     yield
 
 
@@ -187,7 +188,7 @@ async def health_check():
     # A more thorough health check might try a small operation (e.g., read a dummy doc from Firestore)
     try:
         db = get_firestore_client()
-        llm = get_vertex_ai_gemini_client()
+        llm = get_vertex_ai_genai_client()
         if db and llm:
             return {
                 "status": "ok",

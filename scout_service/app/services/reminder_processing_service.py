@@ -7,17 +7,13 @@ from typing import List, Dict, Tuple, Optional
 
 from pydantic import ValidationError  # For catching Pydantic validation errors
 from google.cloud import firestore
-from vertexai.generative_models import (
-    GenerativeModel,
-    GenerationConfig,
-    HarmCategory,
-    HarmBlockThreshold,
-)
+from google import genai
+from google.genai import types
 
 from ..config import settings
 from ..firestore_client import get_firestore_client
-from ..vertex_ai_client import get_vertex_ai_gemini_client
-from ..llm_prompts import construct_gemini_scout_prompt
+from ..vertex_ai_client import get_vertex_ai_genai_client
+from ..llm_prompts import construct_gemini_scout_prompt, get_system_prompt
 from ..models import (
     FixtureForLLM,
     LLMSelectedFixtureResponse,
@@ -51,7 +47,7 @@ class DataValidationError(ReminderProcessingError):
 async def process_fixtures_for_user(user_id: str) -> Dict:
     """
     Processes upcoming fixtures for a given user:
-    1. Fetches user preferences.
+    1. Fetches user preferences (including feedback).
     2. Fetches upcoming fixtures.
     3. Calls LLM (Gemini via Vertex AI) to select matches and define reminders.
     4. Stores generated reminders in Firestore.
@@ -60,7 +56,7 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     logger.info(f"Processing fixtures for user {user_id}...")
 
     db = get_firestore_client()
-    gemini_model = get_vertex_ai_gemini_client()
+    genai_client = get_vertex_ai_genai_client()
 
     # 1. Fetch user's preference
     user_pref_doc = _fetch_user_preference_doc(db, user_id)
@@ -127,7 +123,7 @@ async def process_fixtures_for_user(user_id: str) -> Dict:
     )
 
     llm_response_raw_text, selected_matches_from_llm = (
-        await _call_llm_and_parse_response(gemini_model, full_llm_prompt, user_id)
+        await _call_llm_and_parse_response(genai_client, full_llm_prompt, user_id)
     )
 
     # 4. Store reminders
@@ -260,31 +256,38 @@ def _fetch_upcoming_fixtures(
 
 
 async def _call_llm_and_parse_response(
-    gemini_model: GenerativeModel, full_llm_prompt: str, user_id: str
+    genai_client: genai.Client, full_llm_prompt: str, user_id: str
 ) -> Tuple[str, List[LLMSelectedFixtureResponse]]:
     """Calls the LLM and parses its JSON response."""
     try:
         logger.info(
             f"Sending prompt to Vertex AI Gemini for user {user_id} (model: {settings.GEMINI_MODEL_NAME_VERTEX})."
         )
-        generation_config = GenerationConfig(
-            temperature=0.2,
-            max_output_tokens=8192,
-            # top_p=0.95,
-            # top_k=40
-        )
+
         safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_HARASSMENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
 
-        response = await gemini_model.generate_content_async(
-            full_llm_prompt,
-            generation_config=generation_config,
-            safety_settings=safety_settings,
-            stream=False,  # stream=True would also be async and return an AsyncIterable
+        content_config = types.GenerateContentConfig(
+            system_instruction=get_system_prompt(),
+            temperature=settings.LLM_TEMPERATURE,
+            max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            safety_settings=[
+                types.SafetySetting(
+                    category=category,
+                    threshold=threshold,
+                )
+                for category, threshold in safety_settings.items()
+            ],
+        )
+
+        response = await genai_client.aio.models.generate_content(
+            model=settings.GEMINI_MODEL_NAME_VERTEX,
+            contents=full_llm_prompt,
+            config=content_config,
         )
 
         llm_response_raw_text = ""
@@ -304,6 +307,7 @@ async def _call_llm_and_parse_response(
             elif (
                 not response.candidates
                 or not hasattr(response.candidates[0], "content")
+                or response.candidates[0].content is None
                 or not response.candidates[0].content.parts
             ):  # Check this structure based on SDK docs for async if it differs
                 logger.warning(

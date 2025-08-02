@@ -2,7 +2,7 @@
 set -e
 
 # --- Configuration ---
-export SERVICE_VERSION="0.1.1" # Match your scout_service/app/main.py version
+export SERVICE_VERSION="0.2.0" # Match your scout_service/app/main.py version
 export SERVICE_NAME="scout-service"
 export GCP_PROJECT_ID_VAR=$(gcloud config get-value project)
 if [ -z "$GCP_PROJECT_ID_VAR" ]; then
@@ -14,7 +14,7 @@ export AR_REPO_NAME="fixture-scout-images"
 export FIRESTORE_DATABASE_NAME="fixture-scout-ai-db" # Ensure this is correct
 
 # Scout Service Specific Environment Variables
-export GEMINI_MODEL_NAME_VERTEX="gemini-1.5-flash" # Or your preferred Gemini model
+export GEMINI_MODEL_NAME_VERTEX="gemini-2.5-flash-lite"
 
 export IMAGE_TAG_NAME="${REGION}-docker.pkg.dev/${GCP_PROJECT_ID_VAR}/${AR_REPO_NAME}/${SERVICE_NAME}:${SERVICE_VERSION}"
 
@@ -34,8 +34,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --source=. \
     --region="${REGION}" \
     --platform=managed \
-    --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID_VAR}" \
-    --set-env-vars="GCP_REGION=${REGION}" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \
     --set-env-vars="GEMINI_MODEL_NAME_VERTEX=${GEMINI_MODEL_NAME_VERTEX}" \

@@ -9,11 +9,13 @@ class Settings:
     # Firestore
     FIRESTORE_DATABASE_NAME: str | None = os.getenv("FIRESTORE_DATABASE_NAME")
 
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+    LLM_MAX_OUTPUT_TOKENS: int = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "8192"))
+
     # Vertex AI
-    GCP_PROJECT_ID: str | None = os.getenv("GCP_PROJECT_ID")
-    GCP_REGION: str | None = os.getenv("GCP_REGION")
+    GCP_PROJECT_ID: str | None = os.getenv("GOOGLE_CLOUD_PROJECT")
     GEMINI_MODEL_NAME_VERTEX: str = os.getenv(
-        "GEMINI_MODEL_NAME_VERTEX", "gemini-1.5-flash"
+        "GEMINI_MODEL_NAME_VERTEX", "gemini-2.5-flash-lite"
     )
 
     # Application Specific
