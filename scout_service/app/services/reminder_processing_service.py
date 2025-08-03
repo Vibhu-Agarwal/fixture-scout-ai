@@ -275,6 +275,9 @@ async def _call_llm_and_parse_response(
             system_instruction=get_system_prompt(),
             temperature=settings.LLM_TEMPERATURE,
             max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            tools=[
+                types.Tool(google_search=types.GoogleSearch()),
+            ],
             safety_settings=[
                 types.SafetySetting(
                     category=category,
