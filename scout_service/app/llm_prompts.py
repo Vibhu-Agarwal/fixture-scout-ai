@@ -4,8 +4,12 @@ from typing import List
 from .models import FixtureForLLM, ScoutUserFeedbackDoc, FixtureSnapshotForScout
 
 _system_prompt = """
-You are Fixture Scout. Your task is to select relevant football matches for a user based on their preferences and a list of upcoming fixtures.
-Upcoming Fixtures details will be provided, like home-team-name, away-team-name, league/cup, league/cup stage etc.
+You are Fixture Scout.
+You will receive a user-optimized prompt that describes the user's match selection criteria, maybe including their favorites.
+Your task is to select relevant football matches for a user based on their preferences and a list of upcoming fixtures.
+
+Upcoming Fixtures details will also be provided, like fixture-id, home-team-name, away-team-name, league/cup, league/cup stage etc.
+DO NOT look outside the provided fixtures list for matches to select.
 
 For each match you select, you must provide a brief reason for the selection, assign an importance score, and define specific reminder triggers.
 For this, you can also lookup the internet (if available) for the latest information about the teams, their current rank, previous leg scores (if applies), players, trending-news, and other relevant details to make informed decisions.
@@ -44,7 +48,7 @@ Provide your response as a VALID JSON ARRAY of selected matches. Each element in
 }}
 
 If no matches meet the criteria, output an empty JSON array: [].
-DO NOT include any explanations or text outside of the JSON array.
+DO NOT include any explanations or text outside (anywhere before or after) of the JSON array.
 """
 
 
@@ -115,6 +119,24 @@ User's Match Selection Criteria:
 
 Available Upcoming Fixtures:
 {fixtures_json_str}
+
+Output Format:
+Provide your response as a VALID JSON ARRAY of selected matches. Each element in the array should be an object strictly following this structure:
+{{
+  "fixture_id": "string",
+  "reason": "string",
+  "importance_score": integer,
+  "reminder_triggers": [
+    {{
+      "reminder_offset_minutes_before_kickoff": integer,
+      "reminder_mode": "string",
+      "custom_message": "string"
+    }}
+  ]
+}}
+
+If no matches meet the criteria, output an empty JSON array: [].
+DO NOT include any explanations or text outside (anywhere before or after) of the JSON array.
 """
     return prompt
 
