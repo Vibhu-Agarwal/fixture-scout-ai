@@ -20,6 +20,7 @@ from .firestore_client import get_firestore_client
 from .pubsub_utils import ensure_pubsub_topic_exists
 from .services.scheduler_logic import fetch_and_process_due_reminders
 from .services.status_updater_logic import process_reminder_status_update
+from .services.delete_reminders import delete_future_reminders
 from .models import NotificationStatusUpdatePayload, PubSubPushMessage
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,27 @@ async def handle_reminder_status_update_push(
         f"StatusUpdater: Status update for reminder {status_update_payload.original_reminder_id} handed off to background task."
     )
     return  # Implicit 204
+
+
+# --- Endpoint to delete future reminders ---
+@app.post("/reminders/delete-future-reminders", status_code=200)
+async def api_delete_future_reminders():
+    """
+    API endpoint to delete all future reminders.
+    """
+    db = get_firestore_client()
+    try:
+        logger.info(f"Received request to delete future reminders")
+        delete_future_reminders(db)
+        return {"message": "Future reminders deleted successfully."}
+    except Exception as e:
+        logger.error(
+            f"Unexpected error deleting reminders: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail=f"An unexpected internal error occurred: {str(e)}"
+        )
 
 
 # --- Root and Health Check ---
