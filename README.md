@@ -1,8 +1,9 @@
 # Fixture Scout AI ⚽🤖
 
 **Fixture Scout AI** is an AI-powered microservice platform that delivers personalized football match reminders to fans. By leveraging LLMs (Google Vertex AI Gemini), user preferences, and real-time football data, it ensures you never miss a match that matters to you. 🤍
+  
+**Try it here: https://fixture-scout-ai.web.app/ 🚀**
 
----
 
 ## What is Fixture Scout AI? 🤔
 

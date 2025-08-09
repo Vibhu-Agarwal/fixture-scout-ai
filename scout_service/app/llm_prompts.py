@@ -47,6 +47,7 @@ Provide your response as a VALID JSON ARRAY of selected matches. Each element in
   ]
 }}
 
+Even if the number of selected matches is exactly one, you must still return a JSON array with one object inside it.
 If no matches meet the criteria, output an empty JSON array: [].
 DO NOT include any explanations or text outside (anywhere before or after) of the JSON array.
 """
@@ -135,6 +136,7 @@ Provide your response as a VALID JSON ARRAY of selected matches. Each element in
   ]
 }}
 
+Even if the number of selected matches is exactly one, you must still return a JSON array with one object inside it.
 If no matches meet the criteria, output an empty JSON array: [].
 DO NOT include any explanations or text outside (anywhere before or after) of the JSON array.
 """

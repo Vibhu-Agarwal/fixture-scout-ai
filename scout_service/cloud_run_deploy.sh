@@ -37,6 +37,8 @@ gcloud run deploy "${SERVICE_NAME}" \
     --set-env-vars="GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID_VAR}" \
     --set-env-vars="FIRESTORE_DATABASE_NAME=${FIRESTORE_DATABASE_NAME}" \
     --set-env-vars="LOG_LEVEL=INFO" \
+    --set-env-vars="LLM_MAX_OUTPUT_TOKENS=8192" \
+    --set-env-vars="LLM_TEMPERATURE=0.3" \
     --set-env-vars="GEMINI_MODEL_NAME_VERTEX=${GEMINI_MODEL_NAME_VERTEX}" \
     --timeout=300s \
     --concurrency=80 \
