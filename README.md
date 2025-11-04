@@ -4,6 +4,11 @@
   
 **Try it here: https://fixture-scout-ai.web.app/ 🚀**
 
+![Match Recommendations](media/match_recommendations.png)
+
+Update 4 Nov 2025:  
+I've paused `scout-service`'s daily cron-job as it was incurring daily costs ☁️💸  
+This would prevent automatic daily generation of fresh fixtures reminders but you'll still be able to manually trigger it by updating/saving your preferences :)
 
 ## What is Fixture Scout AI? 🤔
 
@@ -161,6 +166,9 @@ flowchart TD
 
 ### Core Business Logic Services
 
+
+   ![All Services](media/services.png)
+
 - **User Management Service:**  
   Manages user profiles, preferences, and feedback. Handles user authentication validation, stores user data in Firestore, and provides endpoints for preference management and feedback collection. Triggers Scout Service processing when preferences are updated. 👤
 
@@ -195,7 +203,8 @@ flowchart TD
 2. **Preference Configuration:**  
    User enters football interests in natural language. The Prompt Optimization Service uses Gemini to convert this into a structured, actionable prompt optimized for match selection. ✨
 
-   ![Prompt Optimization Example](images/prompt-optimization-example.png)
+   ![Prompt Optimization Example](media/prompt-optimization-example.png)
+   ![Match Preferences](media/match_preferences.png)
 
 ### Data Processing Pipeline
 
